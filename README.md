@@ -10,15 +10,16 @@ pnpm install
 pnpm start:dev     # http://localhost:3000/health → { "status": "ok" }
 ```
 
-환경 변수는 `.env.example`을 `.env`로 복사해 채운다. `.env`는 커밋하지 않는다.
+환경 변수는 `.env.example`을 `.env`로 복사해 채운다. `.env`는 커밋하지 않는다. 키 설명과 DB 접속 방법은 [docs/ENV.md](docs/ENV.md).
 
 ## 명령어
 
-| 명령              | 내용                                              |
-| ----------------- | ------------------------------------------------- |
-| `pnpm check`      | lint + format:check + typecheck + test + test:e2e |
-| `pnpm build`      | `dist/`로 빌드                                    |
-| `pnpm start:prod` | 빌드 결과 실행                                    |
+| 명령              | 내용                                                 |
+| ----------------- | ---------------------------------------------------- |
+| `pnpm check`      | lint + format:check + typecheck + test + test:e2e    |
+| `pnpm build`      | `dist/`로 빌드                                       |
+| `pnpm start:prod` | 빌드 결과 실행                                       |
+| `pnpm test:db`    | 실제 ClickHouse 테스트 (`.env` 필요, check에서 빠짐) |
 
 ## 문서
 
@@ -26,3 +27,4 @@ pnpm start:dev     # http://localhost:3000/health → { "status": "ok" }
 - 코드 컨벤션: [docs/CONVENTION.md](docs/CONVENTION.md)
 - Git 규칙: [docs/GIT_WORKFLOW.md](docs/GIT_WORKFLOW.md)
 - 이슈와 PR 작성: [docs/ISSUE_PR_GUIDE.md](docs/ISSUE_PR_GUIDE.md)
+- 환경 변수: [docs/ENV.md](docs/ENV.md)

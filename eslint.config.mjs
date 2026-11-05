@@ -34,10 +34,10 @@ export default defineConfig([
     },
   },
   {
-    // Env vars (DB credentials etc.) are read only at the entry point and in src/config/.
+    // Env vars (DB credentials etc.) are read only in src/config/ (via @nestjs/config).
     // Everything else receives values through DI. See docs/CONVENTION.md.
     files: ['src/**'],
-    ignores: ['src/main.ts', 'src/config/**'],
+    ignores: ['src/config/**'],
     rules: {
       'n/no-process-env': 'error',
     },

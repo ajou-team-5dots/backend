@@ -13,6 +13,7 @@ AI 코딩 에이전트(Codex 등)를 위한 작업 규칙. 사람용 상세 규�
 
 - NestJS 12, TypeScript strict, ESM (`"type": "module"`, 상대 import는 `.js` 확장자)
 - Node 26.13.0 (`.nvmrc`), 테스트는 Vitest + supertest
+- `@nestjs/config` + zod(환경 변수와 외부 입력 검증), `@clickhouse/client`
 - 패키지 매니저: **pnpm만 사용** (npm, yarn 금지)
 - **TS 파일을 `node file.ts`로 직접 실행하지 않는다.** Node 26의 기본 TS 실행은 타입만 지우는 방식이라 enum, 생성자 매개변수 속성(`constructor(private readonly x)`), namespace가 동작하지 않는다. 빌드·실행·테스트는 `nest build`(tsc)와 Vitest를 거친다
 
@@ -24,7 +25,8 @@ pnpm check          # lint + format:check + typecheck + test + test:e2e. 작업 
 pnpm build          # dist/ 로 빌드 (nest build)
 pnpm start:prod     # 빌드 결과 실행. .env가 있으면 읽는다
 pnpm test           # 단위 테스트 (src/**/*.spec.ts)
-pnpm test:e2e       # e2e 테스트 (test/**/*.e2e-spec.ts)
+pnpm test:e2e       # e2e 테스트 (test/**/*.e2e-spec.ts). DB 없이 돈다
+pnpm test:db        # 실제 ClickHouse 테스트 (test/db). .env 필요, check와 CI에서는 빠진다. 공유 DB라 가볍게
 pnpm lint:fix       # ESLint 자동 수정
 pnpm format         # Prettier 적용
 ```
@@ -39,20 +41,22 @@ package.json 스크립트는 Windows와 Mac에서 모두 돌아야 한다. `rm -
 4. named export만 사용. 파일 하나에 클래스 하나
 5. 파일명 kebab-case + Nest 접미사(`encounters.controller.ts`, `encounters.service.ts`, `create-x.dto.ts`), 클래스 PascalCase, 상수 UPPER_SNAKE_CASE
 6. **`any` 금지** (`unknown` + 좁히기), **객체 타입은 `interface`**, `type`은 유니온/유틸리티에만. `@ts-ignore` 금지
-7. `process.env`는 `src/main.ts`와 `src/config/`에서만 읽는다(lint 에러). 나머지는 DI로 값을 받는다
+7. `process.env`는 `src/config/`에서만 읽는다(lint 에러). 나머지는 `ConfigService`로 받는다. 새 키는 `src/config/env.schema.ts`, `.env.example`, `docs/ENV.md`에 함께 추가한다
 
 ## Nest 모듈 구조 (상세: `docs/CONVENTION.md` 4장, 8장)
 
 ```
 src/main.ts                 진입점. 앱 생성, 포트
-src/app.module.ts           기능 모듈을 모으기만 한다
+src/app.module.ts           ConfigModule과 기능 모듈을 모으기만 한다
+src/config/                 환경 변수 검증 (zod). 키가 없거나 틀리면 시작 시 멈춘다
+src/clickhouse/             공유 ClickHouse 클라이언트. ClickHouseService.query(sql, params)
+src/common/                 ZodValidationPipe 등 공용 부품
 src/<기능>/                 기능 하나 = 모듈 하나 (예: health/, encounters/)
   <기능>.module.ts
   <기능>.controller.ts      HTTP 입출력만. 계산하지 않는다
   <기능>.service.ts         계산과 데이터 접근
   dto/                      외부 입력 DTO (필요할 때만)
-src/config/                 환경 변수 읽기 (생기면)
-test/                       e2e 테스트
+test/                       e2e 테스트 (DB 없음), test/db/ 실제 DB 테스트
 ```
 
 1. 기능마다 모듈을 만들고 `AppModule.imports`에 추가한다
@@ -62,8 +66,8 @@ test/                       e2e 테스트
 
 ## DTO와 검증
 
-- **런타임 검증은 외부 입력에만** 한다: 요청 본문, 쿼리, 경로 매개변수
-- 검증이 필요한 첫 엔드포인트가 생길 때 검증 라이브러리를 추가하고 `docs/CONVENTION.md` 7장을 갱신한다
+- **런타임 검증은 외부 입력과 환경 변수에만** 한다: 요청 본문, 쿼리, 경로 매개변수
+- 도구는 zod. DTO는 `dto/*.dto.ts`에 스키마와 `z.infer` 타입으로 만들고 `new ZodValidationPipe(schema)`로 씌운다
 - 우리 쪽 미리 계산 JSON이나 ClickHouse 응답은 타입(interface)으로 충분하다
 
 ## 데이터 규칙 (반드시 지킬 것)
@@ -72,6 +76,8 @@ test/                       e2e 테스트
 - 채팅 원문, 지갑 주소(`playerId`, `actorId`, `sourceActor`, `targetAddress`)를 응답, 코드, 커밋, 로그 어디에도 노출하지 않는다
 - 이탈률·리텐션 지표를 만들지 않는다
 - 화면용 조회는 기초 표(`encounters`, `player_deaths`, `ability_events`)와 미리 계산 JSON만 쓴다. 원시 `game_events`는 화면용으로 조회하지 않는다
+- ClickHouse 값은 `query_params`(`{name:Type}`)로만 바인딩한다. 문자열을 이어 붙이지 않는다. `readonly` 설정을 보내지 않는다(운영 `api` 계정은 readonly=2)
+- DB 오류 원문은 응답에 넣지 않고, 로그에는 오류 종류와 코드만 남긴다
 - 비밀번호, 토큰, 호스트, IP는 `.env`에만 둔다(커밋 금지). `.env.example`에는 키 이름만 적는다. 값을 출력하거나 로그에 남기지 않는다
 
 ## Git

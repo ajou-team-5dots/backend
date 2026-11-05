@@ -40,7 +40,7 @@ Airbnb 원칙과 NestJS 관례가 충돌하는 곳만 끈다. 새 예외를 추�
 | `class-methods-use-this`                                                  | off  | Nest가 controller·provider 메서드를 DI 인스턴스에서 호출한다. `this`를 안 써도 인스턴스 메서드여야 한다 |
 | `import-x/no-extraneous-dependencies` (`test/**`, `*.spec.ts`, 설정 파일) | 완화 | 테스트와 도구 설정은 개발 때만 돌므로 devDependencies에서 가져와도 된다                                 |
 | `@typescript-eslint/no-explicit-any`                                      | 강화 | `any`를 쓰면 그 지점부터 타입 검사가 꺼진다. `unknown`으로 받고 좁힌다                                  |
-| `n/no-process-env` (`src/main.ts`, `src/config/**` 밖)                    | 강화 | 환경 변수는 진입점과 설정 모듈에서만 읽고 나머지는 DI로 받는다                                          |
+| `n/no-process-env` (`src/config/**` 밖)                                   | 강화 | 환경 변수는 설정 모듈에서 한 번 검증하고, 나머지는 `ConfigService`(DI)로 받는다                         |
 
 DI 생성자(`constructor(private readonly service: XService) {}`)는 airbnb-extended의 TypeScript 설정이 이미 허용하므로 `no-useless-constructor`는 끄지 않았다. 데코레이터(`@Controller`, `@Body` 등)도 현재 규칙과 충돌하지 않는다.
 
@@ -49,29 +49,34 @@ DI 생성자(`constructor(private readonly service: XService) {}`)는 airbnb-ext
 ```
 src/
   main.ts              # 진입점. 앱 생성, 포트
-  app.module.ts        # 기능 모듈을 모으기만 한다
-  health/              # GET /health
+  app.module.ts        # ConfigModule과 기능 모듈을 모으기만 한다
+  config/              # 환경 변수 검증 (env.schema.ts). process.env는 여기서만
+  clickhouse/          # 공유 ClickHouse 클라이언트 (ClickHouseService.query)
+  common/              # 여러 모듈이 쓰는 pipe 등 (ZodValidationPipe)
+  health/              # GET /health, GET /health/db
+  encounters/          # GET /encounters/count (예제 조회)
   <feature>/           # 기능 하나 = 모듈 하나
     <feature>.module.ts
     <feature>.controller.ts
     <feature>.controller.spec.ts
     <feature>.service.ts
     dto/               # 외부 입력 DTO (필요할 때만)
-  config/              # 환경 변수 읽기 (생기면)
-test/                  # e2e 테스트 (*.e2e-spec.ts)
+test/                  # e2e 테스트 (*.e2e-spec.ts). DB 없이 돈다
+test/db/               # 실제 DB 테스트 (*.db-spec.ts). pnpm test:db로만, check와 CI에서는 빠진다
 ```
 
 ## 5. 네이밍
 
-| 대상            | 규칙                        | 예시                                      |
-| --------------- | --------------------------- | ----------------------------------------- |
-| 파일            | kebab-case + Nest 접미사    | `encounters.service.ts`, `query-x.dto.ts` |
-| 클래스          | PascalCase + 역할 접미사    | `EncountersService`, `QueryXDto`          |
-| 함수/변수       | camelCase                   | `getEncounterSummary`                     |
-| 상수            | UPPER_SNAKE_CASE            | `DEFAULT_PORT`                            |
-| 타입/인터페이스 | PascalCase, `I` 접두사 금지 | `EncounterSummary`                        |
-| 단위 테스트     | 대상 파일 옆 `*.spec.ts`    | `health.controller.spec.ts`               |
-| e2e 테스트      | `test/` 안 `*.e2e-spec.ts`  | `test/health.e2e-spec.ts`                 |
+| 대상            | 규칙                         | 예시                                      |
+| --------------- | ---------------------------- | ----------------------------------------- |
+| 파일            | kebab-case + Nest 접미사     | `encounters.service.ts`, `query-x.dto.ts` |
+| 클래스          | PascalCase + 역할 접미사     | `EncountersService`, `QueryXDto`          |
+| 함수/변수       | camelCase                    | `getEncounterSummary`                     |
+| 상수            | UPPER_SNAKE_CASE             | `DEFAULT_PORT`                            |
+| 타입/인터페이스 | PascalCase, `I` 접두사 금지  | `EncounterSummary`                        |
+| 단위 테스트     | 대상 파일 옆 `*.spec.ts`     | `health.controller.spec.ts`               |
+| e2e 테스트      | `test/` 안 `*.e2e-spec.ts`   | `test/health.e2e-spec.ts`                 |
+| 실제 DB 테스트  | `test/db/` 안 `*.db-spec.ts` | `test/db/clickhouse.db-spec.ts`           |
 
 ## 6. NestJS
 
@@ -98,16 +103,21 @@ type EncounterKey = Pick<EncounterSummary, 'monsterId'>; // 유틸리티: type
 
 3. `as` 단언은 최소화. 쓰면 왜 안전한지 주석 한 줄
 4. `// @ts-ignore` 금지. 꼭 필요하면 `// @ts-expect-error 이유`
-5. **런타임 검증은 외부 입력에만 한다.** 요청 본문, 쿼리, 경로 매개변수가 그 입구다. 우리가 만든 미리 계산 JSON과 ClickHouse 응답은 타입만으로 충분하다
-   - 검증이 필요한 첫 엔드포인트가 생기면 그때 검증 라이브러리를 추가하고 이 항목을 갱신한다
+5. **런타임 검증은 외부 입력과 환경 변수에만 한다.** 요청 본문, 쿼리, 경로 매개변수가 그 입구다. 우리가 만든 미리 계산 JSON과 ClickHouse 응답은 타입만으로 충분하다
+   - 도구는 **zod** 하나다. 환경 변수(`src/config/env.schema.ts`)와 요청 입력(`dto/*.dto.ts`)을 같은 방식으로 검사한다. class-validator는 데코레이터와 메타데이터에 기대는데, 스키마 하나에서 타입(`z.infer`)까지 나오는 zod가 더 단순하다
+   - DTO는 zod 스키마와 `z.infer` 타입으로 만들고 `@Query(new ZodValidationPipe(schema))`처럼 씌운다. 400 응답에는 틀린 필드 이름만 담는다(받은 값은 넣지 않는다)
 
 ## 8. 데이터 접근
 
 1. **ClickHouse와 파일 접근은 service에만 둔다.** controller는 service를 호출만 한다
 2. service는 화면에 필요한 필드만 담은 객체를 돌려준다. DB 행을 통째로 넘기지 않는다 (지갑 주소, 채팅 원문이 응답으로 새는 것을 막는다)
 3. 화면용 조회는 기초 표(`encounters`, `player_deaths`, `ability_events`)와 미리 계산 JSON만 쓴다. 원시 `game_events`는 화면용으로 조회하지 않는다
-4. 접속 정보(호스트, 계정, 비밀번호)는 `.env`에만 둔다. `.env.example`에는 키 이름만 적는다
-5. 계층은 controller → service 두 단계로 충분하다. service 하나가 300줄을 넘거나 여러 service가 같은 쿼리를 반복하면 그때 repository로 나눈다
+4. 접속 정보(호스트, 계정, 비밀번호)는 `.env`에만 둔다. `.env.example`에는 키 이름만 적는다. 키 목록과 환경별 차이는 `docs/ENV.md`
+5. ClickHouse는 `ClickHouseService.query(sql, params)`로만 부른다. **값은 `{name:Type}` 자리표시와 `params`로 바인딩하고 문자열을 이어 붙이지 않는다**
+6. `clickhouse_settings`에 `readonly`를 넣지 않는다. 운영 `api` 계정은 readonly=2라 클라이언트가 보내면 서버가 거부한다
+7. DB 오류 원문은 응답에 넣지 않는다(503과 고정 문구). 로그에는 오류 종류와 코드만 남기고 메시지, 비밀번호, URL은 남기지 않는다
+8. `count()`는 UInt64라 JSON에서 문자열로 온다. `toUInt32(count())`처럼 감싸서 숫자로 받는다
+9. 계층은 controller → service 두 단계로 충분하다. service 하나가 300줄을 넘거나 여러 service가 같은 쿼리를 반복하면 그때 repository로 나눈다
 
 ## 9. 데이터 취급 (Akkadia 프로젝트 공통)
 
