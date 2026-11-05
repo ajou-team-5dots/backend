@@ -1,0 +1,39 @@
+name: 버그 리포트
+description: 잘못된 동작
+title: '[Bug] '
+labels: ['bug']
+body:
+  - type: textarea
+    id: what
+    attributes:
+      label: 현상
+      description: 실제로 일어난 일
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: 기대 동작
+      description: 원래 어떻게 되어야 하는가
+    validations:
+      required: true
+  - type: textarea
+    id: repro
+    attributes:
+      label: 재현 방법
+      placeholder: |
+        1. pnpm start:dev
+        2. GET /encounters/summary?monster=small_zombie 요청
+        3. 사망 수가 기대값 40과 다름
+    validations:
+      required: true
+  - type: input
+    id: env
+    attributes:
+      label: 환경
+      placeholder: 로컬, Windows 11, Node 26.13.0
+  - type: textarea
+    id: evidence
+    attributes:
+      label: 스크린샷 / 로그
+      description: 에러 메시지는 코드 블록으로. 채팅 원문, 지갑 주소는 가릴 것
