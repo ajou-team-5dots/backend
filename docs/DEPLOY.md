@@ -1,6 +1,6 @@
 # 배포
 
-지금은 **내부 테스트**용이다. HTTP로 띄우고, VM 보안 그룹은 팀원 IP만 3000 포트에 연다. HTTPS(Caddy), 자동 배포, API 키는 이번 범위가 아니며 나중에 붙인다.
+지금은 **내부 테스트**용이다. HTTP로 띄우고, VM 보안 그룹은 팀원 IP만 3000 포트에 연다. HTTPS(Caddy)와 자동 배포는 이번 범위가 아니며 나중에 붙인다.
 
 ## 1. VM 준비 (처음 한 번)
 
@@ -28,6 +28,8 @@ nano /opt/backend/.env   # 키를 적는다
 - 첫 배포 전이라 소스가 아직 없다. 키 이름은 repo의 `.env.example`을 보고 적는다
 - 키 목록과 설명은 `.env.example`과 [ENV.md](./ENV.md#1-키-목록) 1절을 참고한다
 - `NODE_ENV=production`으로 두고, `CLICKHOUSE_URL`은 DB의 **사설 IP** 주소를 적는다
+- **`API_KEYS`는 production에서 필수다.** 비우면 컨테이너가 시작하지 않고 로그에 `환경 변수 설정 오류: API_KEYS(없음)`가 나온다
+- 키 만들기는 `openssl rand -hex 32`를 쓴다(32자 이상). 만든 키는 팀 비밀번호 관리자에 두고, 같은 값을 Vercel `API_KEYS` 자리([ENV.md](./ENV.md#5-vercel-front-demo) 5절)에도 넣는다. 교체 순서는 [ENV.md](./ENV.md#1-키-목록) 1절을 참고한다
 - 값은 **팀 비밀번호 관리자**에서 받는다. 메신저·Notion·GitHub(Secrets 포함)에 두지 않는다
 - 파일 주인은 `docker compose`를 실행하는 사용자다. `docker compose`는 `env_file`을 실행한 사용자 권한으로 읽으므로, root 소유 600이면 읽지 못한다
 - 배포는 이 파일을 건드리지 않는다. 값을 바꾸면 파일을 고치고 `docker compose up -d`로 다시 띄운다(`restart`는 `env_file` 변경을 반영하지 않는다)
@@ -56,16 +58,24 @@ cd app && docker compose up -d --build
 
 ## 4. 확인
 
+`/health`만 키 없이 열리고, `/health/db`와 `/encounters/...`는 `x-api-key` 헤더가 필요하다. 키를 셸 기록에 남기지 않도록 먼저 입력받는다.
+
 ```bash
+read -rs API_KEY   # 키를 붙여 넣고 Enter (화면과 셸 기록에 남지 않는다)
 docker compose ps                     # STATUS가 healthy인지 (healthcheck는 30초마다 /health)
-curl -s localhost:3000/health         # {"status":"ok"}
-curl -s -o /dev/null -w '%{http_code}\n' localhost:3000/health/db   # 200. 503이면 DB 연결 실패
-curl -s 'localhost:3000/encounters/count?monster=small_zombie&heavy=include&period=current'
+curl -s localhost:3000/health         # {"status":"ok"} (키 필요 없음)
+curl -s -o /dev/null -w '%{http_code}\n' localhost:3000/health/db                        # 401 (키 없음)
+curl -s -o /dev/null -w '%{http_code}\n' -H "x-api-key: $API_KEY" localhost:3000/health/db   # 200. 503이면 DB 연결 실패
+curl -s -H "x-api-key: $API_KEY" 'localhost:3000/encounters/count?monster=small_zombie&heavy=include&period=current'
 # {"monster":"small_zombie","encounters":4429}
+curl -s -o /dev/null -w '%{http_code}\n' -H "x-api-key: $API_KEY" 'localhost:3000/encounters/count?monster=nobody'   # 404 (모르는 몬스터)
 docker compose logs --tail 100 backend
+unset API_KEY
 ```
 
-- 팀원 PC에서는 `http://<VM 주소>:3000/health`로 확인한다
+- 팀원 PC에서는 `http://<VM 주소>:3000/health`(키 없이)로 확인한다. 다른 경로를 브라우저 주소창으로 열면 401이 정상이다
+- 401이면 볼 것: 헤더 이름(`x-api-key`), `.env`의 `API_KEYS`와 같은 값인지, 앞뒤 공백
+- 429면 IP 하나가 1분에 `RATE_LIMIT_PER_MINUTE`(기본 60)번을 넘긴 것이다. 1분 뒤 다시 된다
 - `/health/db`가 503이면 볼 것: `.env`의 `CLICKHOUSE_URL`(사설 IP인지), DB 보안 그룹이 이 VM 보안 그룹을 허용하는지, 계정·비밀번호
 - 환경 변수가 없거나 틀리면 컨테이너가 바로 멈추고 로그에 **키 이름만** 나온다(`환경 변수 설정 오류: ...`)
 
@@ -84,4 +94,4 @@ docker compose up -d --no-build
 ## 6. 나중에 바꿀 것
 
 - Caddy(HTTPS)를 앞에 두면 `compose.yaml`의 `ports`를 `127.0.0.1:3000:3000`으로 바꾸고 보안 그룹의 3000을 닫는다
-- 자동 배포(GitHub Actions), API 키(`API_KEYS`)는 별도 이슈
+- 자동 배포(GitHub Actions)는 별도 이슈
