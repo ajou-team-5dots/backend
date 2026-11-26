@@ -1,7 +1,8 @@
 # Secrets never enter the build context: the server reads /opt/backend/.env through compose.
-.env*
+# `**/` catches copies in subfolders too, not only at the root.
+**/.env*
 !.env.example
-*.pem
+**/*.pem
 
 # Rebuilt inside the image
 node_modules
@@ -14,6 +15,8 @@ dist
 .husky
 .vscode
 .idea
+.claude
+.handoff
 coverage
 test-results
 *.log

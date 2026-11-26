@@ -12,19 +12,19 @@
 
 ## 1. 키 목록
 
-| 키                              | 필수            | 비밀      | 개발                       | 운영                       |
-| ------------------------------- | --------------- | --------- | -------------------------- | -------------------------- |
-| `NODE_ENV`                      | 아님            | 아님      | `development` (명시)       | `production`               |
-| `PORT`                          | 아님            | 아님      | `3000` (기본)              | `3000`                     |
-| `CLICKHOUSE_URL`                | 필수            | 비밀 취급 | `http://<DB 공인 IP>:8123` | `http://<DB 사설 IP>:8123` |
-| `CLICKHOUSE_USER`               | 필수            | 비밀 취급 | 읽기 전용 `api` 계정       | 같음                       |
-| `CLICKHOUSE_PASSWORD`           | 필수            | **비밀**  | `api` 계정 비밀번호        | 같음                       |
-| `CLICKHOUSE_DB`                 | 필수            | 아님      | 같음                       | 같음                       |
-| `CLICKHOUSE_REQUEST_TIMEOUT_MS` | 아님            | 아님      | `10000` (기본)             | `10000` (기본)             |
-| `PRECOMPUTED_DIR`               | 아님            | 아님      | `data/precomputed` (기본)  | 마운트한 폴더 (4장)        |
-| `CACHE_TTL_MS`                  | 아님            | 아님      | `3600000` (기본, 1시간)    | `3600000` (기본)           |
-| `API_KEYS`                      | production 필수 | **비밀**  | 비워 두면 검사 끔          | 키 1~2개                   |
-| `REVALIDATE_TOKEN`              | production 필수 | **비밀**  | 비워 두면 캐시 비우기 거부 | 토큰 1개                   |
+| 키                              | 필수            | 비밀      | 개발                       | 운영                                 |
+| ------------------------------- | --------------- | --------- | -------------------------- | ------------------------------------ |
+| `NODE_ENV`                      | 아님            | 아님      | `development` (명시)       | `production`                         |
+| `PORT`                          | 아님            | 아님      | `3000` (기본)              | `3000`                               |
+| `CLICKHOUSE_URL`                | 필수            | 비밀 취급 | `http://<DB 공인 IP>:8123` | `http://<DB 사설 IP>:8123`           |
+| `CLICKHOUSE_USER`               | 필수            | 비밀 취급 | 읽기 전용 `api` 계정       | 같음                                 |
+| `CLICKHOUSE_PASSWORD`           | 필수            | **비밀**  | `api` 계정 비밀번호        | 같음                                 |
+| `CLICKHOUSE_DB`                 | 필수            | 아님      | 같음                       | 같음                                 |
+| `CLICKHOUSE_REQUEST_TIMEOUT_MS` | 아님            | 아님      | `10000` (기본)             | `10000` (기본)                       |
+| `PRECOMPUTED_DIR`               | 아님            | 아님      | `data/precomputed` (기본)  | `data/precomputed` (이미지 안, 기본) |
+| `CACHE_TTL_MS`                  | 아님            | 아님      | `3600000` (기본, 1시간)    | `3600000` (기본)                     |
+| `API_KEYS`                      | production 필수 | **비밀**  | 비워 두면 검사 끔          | 키 1~2개                             |
+| `REVALIDATE_TOKEN`              | production 필수 | **비밀**  | 비워 두면 캐시 비우기 거부 | 토큰 1개                             |
 
 - `CLICKHOUSE_URL`은 `http://` 또는 `https://`만 받는다. 계정과 비밀번호를 URL에 넣으면 거부한다
 - **개발과 운영은 `CLICKHOUSE_URL` 하나만 다르다.** 코드는 그대로 둔다
@@ -37,7 +37,7 @@
 - **요청 제한은 두지 않는다.** API 키 검사가 DB에 닿기 전에 걸러 내고, 사용자별 제한이 필요하면 Vercel(Next 서버) 쪽에서 한다
 - `REVALIDATE_TOKEN`: `POST /admin/cache/clear`만 이 토큰(헤더 `x-revalidate-token`)으로 연다. API 키로는 열리지 않고, 이 토큰으로 다른 경로가 열리지도 않는다. 없거나 틀리면 401. 응답은 `{"cleared": <비운 항목 수>}`. production에서는 같은 64자 hex 규칙이 적용되며, **어느 환경이든 `API_KEYS` 중 하나와 같으면 시작하지 않는다**(`REVALIDATE_TOKEN(API_KEYS와 같음)`)
 - **`/admin/*` 경로는 API 키 대신 `REVALIDATE_TOKEN`으로 보호된다.** `AdminController` 전체가 API 키 검사에서 빠지므로, admin에 경로를 더하면 그 경로도 운영 토큰만으로 열린다. Next 서버(API 키)가 불러야 하는 경로는 admin이 아니라 기능 컨트롤러에 둔다
-- **ClickHouse 적재나 Python 배치 뒤에는 이 엔드포인트를 부르거나 컨테이너를 다시 시작한다.** 그래야 새 데이터와 새 몬스터 목록이 보인다(안 하면 `CACHE_TTL_MS`, 기본 1시간 뒤에 바뀐다)
+- **ClickHouse 적재 뒤에는 이 엔드포인트를 부르거나 컨테이너를 다시 시작한다**(그래야 새 데이터와 새 몬스터 목록이 보인다. 안 하면 `CACHE_TTL_MS` 뒤). Python 배치 결과(미리 계산 JSON)는 이미지에 들어 있어 커밋 후 다시 빌드·배포해야 반영된다
 
 ### 나중에 추가할 키
 
@@ -66,10 +66,11 @@
 
 - 서버에 `/opt/backend/.env`를 **한 번 직접 만들고** `chmod 600`으로 둔다
 - `docker compose`의 `env_file`로 읽는다. **배포는 이 파일을 건드리지 않는다**
-- 값을 바꾸면 서버에서 파일을 고치고 컨테이너를 다시 시작한다
+- 값을 바꾸면 서버에서 파일을 고치고 `/opt/backend/app`에서 `docker compose up -d`로 다시 띄운다(`restart`는 `.env` 변경을 반영하지 않는다)
+- `NODE_ENV`·`PORT`는 `compose.yaml`이 정하므로 `.env`에 넣지 않는다
 - 운영 `CLICKHOUSE_URL`은 DB의 **사설 IP**다. DB 보안 그룹의 8123은 NestJS EC2 보안 그룹에서만 받는다
 - DB 비밀번호는 GitHub(Secrets 포함)에 두지 않는다
-- 미리 계산 JSON은 서버 폴더(예: `/opt/backend/precomputed`)를 컨테이너에 읽기 전용으로 마운트하고 `PRECOMPUTED_DIR`을 그 컨테이너 안 경로로 둔다. 배치가 파일을 바꿔도 이미지를 다시 만들 필요가 없다. 파일을 바꾼 뒤에는 캐시를 비운다
+- 미리 계산 JSON은 이미지에 들어 있다(`/app/data/precomputed`). 배치 결과를 바꾸려면 `data/precomputed`에 커밋하고 다시 빌드·배포한다. `PRECOMPUTED_DIR`은 비워 둔다
 
 ## 5. Vercel (front-demo)
 

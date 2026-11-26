@@ -1,7 +1,8 @@
 # syntax=docker/dockerfile:1
 
-# Runtime image for the NestJS API. Build: docker compose build, or docker build -t 5dots-backend .
-# Env vars come from compose env_file at run time; nothing secret is baked into the image.
+# Runtime image for the NestJS API, for the server (docs/DEPLOY.md). Build: docker compose build.
+# Env vars come from compose at run time (/opt/backend/.env); nothing secret is baked in.
+# Batch JSON (data/precomputed) is baked in: a new batch result means commit, rebuild, deploy.
 
 ARG NODE_IMAGE=node:26.13.0-bookworm-slim
 
@@ -31,7 +32,7 @@ ENV NODE_ENV=production
 COPY package.json ./
 COPY --from=prod-deps /app/node_modules ./node_modules
 COPY --from=build /app/dist ./dist
-# PRECOMPUTED_DIR defaults to data/precomputed relative to the working directory (/app).
+# PRECOMPUTED_DIR defaults to the project root's data/precomputed, i.e. /app/data/precomputed.
 COPY data/precomputed ./data/precomputed
 USER node
 EXPOSE 3000

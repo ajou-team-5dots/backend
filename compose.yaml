@@ -1,15 +1,36 @@
 # Server deploy: docker compose up -d --build (see docs/DEPLOY.md).
+# A fixed project name: deploys run from /opt/backend/app and rollbacks from /opt/backend/app.prev,
+# and both must manage the same container (the default name comes from the folder).
+name: 5dots-backend
+
 services:
   backend:
     build: .
     image: 5dots-backend:latest
     # Created once by hand on the server (chmod 600). Deploys never touch it. See docs/ENV.md.
-    env_file: /opt/backend/.env
+    # Optional so `docker compose build` / `config` also work on a laptop; without it the app
+    # itself stops at startup with the missing key names.
+    env_file:
+      - path: /opt/backend/.env
+        required: false
+    # Fixed here, not in .env: `environment` wins over env_file, so a stray value there is ignored.
+    environment:
+      NODE_ENV: production
+      PORT: '3000'
     restart: unless-stopped
     # Internal test only: the security group admits just the team's IPs on 3000.
     # Once a reverse proxy (Caddy) sits in front, bind to loopback: "127.0.0.1:3000:3000".
     ports:
       - '3000:3000'
+    # The app only reads its files and talks over the network: no writable root filesystem, no
+    # Linux capabilities, and no way to gain privileges (setuid) if something gets in.
+    read_only: true
+    tmpfs:
+      - /tmp
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
     healthcheck:
       # The slim image has no curl, so probe with Node's built-in fetch.
       test:
