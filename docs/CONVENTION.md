@@ -52,7 +52,10 @@ src/
   app.module.ts        # ConfigModule과 기능 모듈을 모으기만 한다
   config/              # 환경 변수 검증 (env.schema.ts). process.env는 여기서만
   clickhouse/          # 공유 ClickHouse 클라이언트 (ClickHouseService.query)
-  common/              # 여러 모듈이 쓰는 pipe 등 (ZodValidationPipe)
+  cache/               # 조회 결과 캐시 (QueryCacheService.wrap, 전역 모듈)
+  precomputed/         # 미리 계산 JSON 읽기 (PrecomputedService.read)
+  common/              # 여러 모듈이 쓰는 pipe 등 (ZodValidationPipe), 기준값 (criteria.ts)
+  types/               # 응답 타입. front-demo가 이 파일을 복사해 쓴다 (기준은 여기)
   health/              # GET /health, GET /health/db
   encounters/          # GET /encounters/count (예제 조회)
   <feature>/           # 기능 하나 = 모듈 하나
@@ -118,6 +121,7 @@ type EncounterKey = Pick<EncounterSummary, 'monsterId'>; // 유틸리티: type
 7. DB 오류 원문은 응답에 넣지 않는다(503과 고정 문구). 로그에는 오류 종류와 코드만 남기고 메시지, 비밀번호, URL은 남기지 않는다
 8. `count()`는 UInt64라 JSON에서 문자열로 온다. `toUInt32(count())`처럼 감싸서 숫자로 받는다
 9. 계층은 controller → service 두 단계로 충분하다. service 하나가 300줄을 넘거나 여러 service가 같은 쿼리를 반복하면 그때 repository로 나눈다
+10. 화면용 조회 결과는 `QueryCacheService.wrap(['함수 이름', ...인자], () => 조회)`로 감싼다. 키 첫 칸은 함수 이름으로 해서 키 하나에 늘 같은 타입이 담기게 한다. 동시에 같은 키가 오면 조회는 한 번만 나가고, 실패는 기억하지 않는다. 미리 계산 JSON은 `PrecomputedService.read()`가 알아서 캐시한다. 캐시에 담긴 값은 깊게 얼려(deep-freeze) 모든 요청이 같은 객체를 공유하므로, 바꾸려면 복사해서 쓴다(직접 고치면 TypeError; hit마다 `pentagon` 같은 큰 JSON을 `structuredClone`으로 복사하지 않고 저장 시 한 번만 비용을 들인다). 캐시 키 요소에는 문자열·숫자·불리언(`null`, `undefined`, `bigint` 포함)만 넣고 객체는 넣지 않는다. `/encounters/count`처럼 사용자가 값을 고르는 조회는 알려진 값(예: 실제 있는 몬스터 ID)만 캐시하고 모르는 값은 404로 돌려보내 캐시가 밀려나지 않게 한다
 
 ## 9. 데이터 취급 (Akkadia 프로젝트 공통)
 

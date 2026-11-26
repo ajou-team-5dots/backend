@@ -1,9 +1,25 @@
+import { fileURLToPath } from 'node:url';
+
 import { z } from 'zod';
 
 const DEFAULT_PORT = 3000;
 const DEFAULT_REQUEST_TIMEOUT_MS = 10_000;
+/**
+ * The repo's data/precomputed, found from this file rather than the working directory: this file
+ * sits two levels below the project root both as src/config/*.ts and as dist/config/*.js, so the
+ * default holds in tests, `pnpm start:prod` and the Docker image (/app) wherever they are started.
+ */
+export const DEFAULT_PRECOMPUTED_DIR = fileURLToPath(
+  new URL('../../data/precomputed', import.meta.url),
+);
+/** Same lifetime as front-demo's cacheLife('hours'). */
+const DEFAULT_CACHE_TTL_MS = 3_600_000;
 
 const nonEmpty = z.string().trim().min(1);
+
+/** `KEY=` copied from .env.example arrives as '', which means "use the default". */
+const blankAsUnset = (value: unknown): unknown =>
+  typeof value === 'string' && value.trim() === '' ? undefined : value;
 
 // Credentials go in CLICKHOUSE_USER/PASSWORD, never in the URL, so the URL can be logged
 // by host alone and is never a secret by itself.
@@ -13,17 +29,27 @@ const clickHouseUrl = z.url({ protocol: /^https?$/ }).refine((value) => {
 });
 
 export const envSchema = z.object({
-  NODE_ENV: z.enum(['development', 'production', 'test']).default('development'),
-  PORT: z.coerce.number().int().min(1).max(65_535).default(DEFAULT_PORT),
+  NODE_ENV: z.preprocess(
+    blankAsUnset,
+    z.enum(['development', 'production', 'test']).default('development'),
+  ),
+  PORT: z.preprocess(
+    blankAsUnset,
+    z.coerce.number().int().min(1).max(65_535).default(DEFAULT_PORT),
+  ),
   CLICKHOUSE_URL: clickHouseUrl,
   CLICKHOUSE_USER: nonEmpty,
   CLICKHOUSE_PASSWORD: nonEmpty,
   CLICKHOUSE_DB: nonEmpty,
-  CLICKHOUSE_REQUEST_TIMEOUT_MS: z.coerce
-    .number()
-    .int()
-    .positive()
-    .default(DEFAULT_REQUEST_TIMEOUT_MS),
+  CLICKHOUSE_REQUEST_TIMEOUT_MS: z.preprocess(
+    blankAsUnset,
+    z.coerce.number().int().positive().default(DEFAULT_REQUEST_TIMEOUT_MS),
+  ),
+  PRECOMPUTED_DIR: z.preprocess(blankAsUnset, nonEmpty.default(DEFAULT_PRECOMPUTED_DIR)),
+  CACHE_TTL_MS: z.preprocess(
+    blankAsUnset,
+    z.coerce.number().int().positive().default(DEFAULT_CACHE_TTL_MS),
+  ),
 });
 
 export type Env = z.infer<typeof envSchema>;

@@ -1,4 +1,7 @@
-import { validateEnv } from './env.schema.js';
+import { readFile } from 'node:fs/promises';
+import path from 'node:path';
+
+import { DEFAULT_PRECOMPUTED_DIR, validateEnv } from './env.schema.js';
 
 const VALID = {
   CLICKHOUSE_URL: 'http://db.example.test:8123',
@@ -23,7 +26,57 @@ describe('validateEnv', () => {
       NODE_ENV: 'development',
       PORT: 3000,
       CLICKHOUSE_REQUEST_TIMEOUT_MS: 10_000,
+      PRECOMPUTED_DIR: DEFAULT_PRECOMPUTED_DIR,
+      CACHE_TTL_MS: 3_600_000,
     });
+  });
+
+  it('미리 계산 폴더 기본값은 실행 위치가 아니라 프로젝트 루트 기준이다', () => {
+    expect(path.isAbsolute(DEFAULT_PRECOMPUTED_DIR)).toBe(true);
+    expect(DEFAULT_PRECOMPUTED_DIR).toBe(
+      path.resolve(import.meta.dirname, '../../data/precomputed'),
+    );
+  });
+
+  it('.env.example을 그대로 복사하고 ClickHouse 필수 키만 채워도 시작한다', async () => {
+    // Every key in the template, blank, as a teammate gets it after `cp .env.example .env`.
+    const template = await readFile(
+      path.resolve(import.meta.dirname, '../../.env.example'),
+      'utf8',
+    );
+    const blank = Object.fromEntries(
+      template
+        .split('\n')
+        .map((line) => /^([A-Z0-9_]+)=/.exec(line)?.[1])
+        .filter((key): key is string => key !== undefined)
+        .map((key) => [key, '']),
+    );
+    expect(Object.keys(blank)).toEqual(expect.arrayContaining(['NODE_ENV', 'PORT']));
+
+    const env = validateEnv({ ...blank, ...VALID });
+    expect(env.NODE_ENV).toBe('development');
+    expect(env.PORT).toBe(3000);
+    expect(env.CLICKHOUSE_REQUEST_TIMEOUT_MS).toBe(10_000);
+  });
+
+  it('.env.example처럼 빈 값(KEY=)이면 기본값을 쓴다', () => {
+    const env = validateEnv({ ...VALID, PRECOMPUTED_DIR: '', CACHE_TTL_MS: ' ' });
+    expect(env.PRECOMPUTED_DIR).toBe(DEFAULT_PRECOMPUTED_DIR);
+    expect(env.CACHE_TTL_MS).toBe(3_600_000);
+  });
+
+  it('미리 계산 폴더와 캐시 시간을 바꿀 수 있다', () => {
+    const env = validateEnv({
+      ...VALID,
+      PRECOMPUTED_DIR: '/opt/precomputed',
+      CACHE_TTL_MS: '60000',
+    });
+    expect(env.PRECOMPUTED_DIR).toBe('/opt/precomputed');
+    expect(env.CACHE_TTL_MS).toBe(60_000);
+  });
+
+  it('캐시 시간이 숫자가 아니면 거부한다', () => {
+    expect(errorOf({ ...VALID, CACHE_TTL_MS: 'soon' })).toContain('CACHE_TTL_MS(형식 오류)');
   });
 
   it('숫자 키는 문자열을 숫자로 바꾼다', () => {
