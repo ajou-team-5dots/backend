@@ -26,7 +26,7 @@
 - **개발과 운영은 `CLICKHOUSE_URL` 하나만 다르다.** 코드는 그대로 둔다
 - `api` 계정은 readonly=2다. 클라이언트는 `readonly` 설정을 보내지 않는다(보내면 서버가 거부한다)
 - 선택 키는 `.env.example`처럼 `KEY=`로 비워 두면 기본값을 쓴다
-- `PRECOMPUTED_DIR`: Python 배치가 쓴 `<이름>.json`(`meta`, `patches`, `expected-risk`, `pentagon`, `h2-same-condition`)이 있는 폴더. 상대 경로는 실행 위치 기준이다
+- `PRECOMPUTED_DIR`: Python 배치가 쓴 `<이름>.json`(`meta`, `patches`, `expected-risk`, `pentagon`, `h2-same-condition`)이 있는 폴더. 비워 두면 기본값은 **프로젝트 루트의 `data/precomputed`** 다. 테스트, `pnpm start:prod`, Docker 이미지의 `/app` 등 어디서 실행하든 같은 폴더를 가리킨다. 값을 직접 적을 때 상대 경로는 실행 위치 기준이므로 절대 경로를 권한다
 - `CACHE_TTL_MS`: ClickHouse 조회와 미리 계산 JSON을 프로세스 메모리에 기억하는 시간. 적재·배치 직후에는 캐시를 비워야 새 값이 보인다
 
 ### 나중에 추가할 키
