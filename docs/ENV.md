@@ -6,36 +6,44 @@
 환경 변수 설정 오류: CLICKHOUSE_URL(없음), PORT(형식 오류). .env.example과 docs/ENV.md를 확인하세요.
 ```
 
+문제가 여러 개면 한 번에 모두 알려 준다. 공백만 있는 값은 "없음"으로 본다.
+
 `process.env`는 `src/config/` 밖에서 읽지 않는다(lint 에러). 다른 코드는 `ConfigService`로 받는다.
 
 ## 1. 키 목록
 
-| 키                              | 필수 | 비밀      | 개발                       | 운영                       |
-| ------------------------------- | ---- | --------- | -------------------------- | -------------------------- |
-| `NODE_ENV`                      | 아님 | 아님      | `development` (기본)       | `production`               |
-| `PORT`                          | 아님 | 아님      | `3000` (기본)              | `3000`                     |
-| `CLICKHOUSE_URL`                | 필수 | 비밀 취급 | `http://<DB 공인 IP>:8123` | `http://<DB 사설 IP>:8123` |
-| `CLICKHOUSE_USER`               | 필수 | 비밀 취급 | 읽기 전용 `api` 계정       | 같음                       |
-| `CLICKHOUSE_PASSWORD`           | 필수 | **비밀**  | `api` 계정 비밀번호        | 같음                       |
-| `CLICKHOUSE_DB`                 | 필수 | 아님      | 같음                       | 같음                       |
-| `CLICKHOUSE_REQUEST_TIMEOUT_MS` | 아님 | 아님      | `10000` (기본)             | `10000` (기본)             |
-| `PRECOMPUTED_DIR`               | 아님 | 아님      | `data/precomputed` (기본)  | 마운트한 폴더 (4장)        |
-| `CACHE_TTL_MS`                  | 아님 | 아님      | `3600000` (기본, 1시간)    | `3600000` (기본)           |
+| 키                              | 필수            | 비밀      | 개발                       | 운영                       |
+| ------------------------------- | --------------- | --------- | -------------------------- | -------------------------- |
+| `NODE_ENV`                      | 아님            | 아님      | `development` (명시)       | `production`               |
+| `PORT`                          | 아님            | 아님      | `3000` (기본)              | `3000`                     |
+| `CLICKHOUSE_URL`                | 필수            | 비밀 취급 | `http://<DB 공인 IP>:8123` | `http://<DB 사설 IP>:8123` |
+| `CLICKHOUSE_USER`               | 필수            | 비밀 취급 | 읽기 전용 `api` 계정       | 같음                       |
+| `CLICKHOUSE_PASSWORD`           | 필수            | **비밀**  | `api` 계정 비밀번호        | 같음                       |
+| `CLICKHOUSE_DB`                 | 필수            | 아님      | 같음                       | 같음                       |
+| `CLICKHOUSE_REQUEST_TIMEOUT_MS` | 아님            | 아님      | `10000` (기본)             | `10000` (기본)             |
+| `PRECOMPUTED_DIR`               | 아님            | 아님      | `data/precomputed` (기본)  | 마운트한 폴더 (4장)        |
+| `CACHE_TTL_MS`                  | 아님            | 아님      | `3600000` (기본, 1시간)    | `3600000` (기본)           |
+| `API_KEYS`                      | production 필수 | **비밀**  | 비워 두면 검사 끔          | 키 1~2개                   |
+| `REVALIDATE_TOKEN`              | production 필수 | **비밀**  | 비워 두면 캐시 비우기 거부 | 토큰 1개                   |
 
 - `CLICKHOUSE_URL`은 `http://` 또는 `https://`만 받는다. 계정과 비밀번호를 URL에 넣으면 거부한다
 - **개발과 운영은 `CLICKHOUSE_URL` 하나만 다르다.** 코드는 그대로 둔다
 - `api` 계정은 readonly=2다. 클라이언트는 `readonly` 설정을 보내지 않는다(보내면 서버가 거부한다)
 - 선택 키는 `.env.example`처럼 `KEY=`로 비워 두면 기본값을 쓴다
+- `CLICKHOUSE_REQUEST_TIMEOUT_MS`: ClickHouse 요청 제한 시간. 이 시간이 지나면 조회는 실패로 끝나고(503), 실패한 결과는 캐시에 남지 않는다
 - `PRECOMPUTED_DIR`: Python 배치가 쓴 `<이름>.json`(`meta`, `patches`, `expected-risk`, `pentagon`, `h2-same-condition`)이 있는 폴더. 비워 두면 기본값은 **프로젝트 루트의 `data/precomputed`** 다. 테스트, `pnpm start:prod`, Docker 이미지의 `/app` 등 어디서 실행하든 같은 폴더를 가리킨다. 값을 직접 적을 때 상대 경로는 실행 위치 기준이므로 절대 경로를 권한다
-- `CACHE_TTL_MS`: ClickHouse 조회와 미리 계산 JSON을 프로세스 메모리에 기억하는 시간. 적재·배치 직후에는 캐시를 비워야 새 값이 보인다
+- `CACHE_TTL_MS`: ClickHouse 조회와 미리 계산 JSON을 프로세스 메모리에 기억하는 시간. 적재·배치 직후에는 캐시를 비워야 새 값이 보인다(`REVALIDATE_TOKEN` 항목 참고)
+- `API_KEYS`: `/health`를 뺀 모든 요청은 `x-api-key` 헤더가 이 중 하나와 같아야 한다. 없거나 틀리면 401(둘 다 같은 문구). `/health/db`도 키가 필요하다. 키는 쉼표로 두 개까지 받아, 새 키를 더하고 → Vercel 값을 바꾸고 → 옛 키를 빼는 순서로 중단 없이 바꾼다. **`NODE_ENV`를 `development`나 `test`로 명시했을 때만** 비워 둘 수 있고 그때 검사를 끈다(시작할 때 경고 로그 한 줄). `NODE_ENV`가 비어 있으면(기본값 development로 동작하더라도) 서버에서 API가 열리지 않도록 `API_KEYS`가 없으면 시작하지 않는다. production에서는 각 키가 64자 소문자 hex(`openssl rand -hex 32` 결과)여야 한다. 손으로 친 값이나 이 공개 저장소의 테스트 키는 거부한다
+- **요청 제한은 두지 않는다.** API 키 검사가 DB에 닿기 전에 걸러 내고, 사용자별 제한이 필요하면 Vercel(Next 서버) 쪽에서 한다
+- `REVALIDATE_TOKEN`: `POST /admin/cache/clear`만 이 토큰(헤더 `x-revalidate-token`)으로 연다. API 키로는 열리지 않고, 이 토큰으로 다른 경로가 열리지도 않는다. 없거나 틀리면 401. 응답은 `{"cleared": <비운 항목 수>}`. production에서는 같은 64자 hex 규칙이 적용되며, **어느 환경이든 `API_KEYS` 중 하나와 같으면 시작하지 않는다**(`REVALIDATE_TOKEN(API_KEYS와 같음)`)
+- **`/admin/*` 경로는 API 키 대신 `REVALIDATE_TOKEN`으로 보호된다.** `AdminController` 전체가 API 키 검사에서 빠지므로, admin에 경로를 더하면 그 경로도 운영 토큰만으로 열린다. Next 서버(API 키)가 불러야 하는 경로는 admin이 아니라 기능 컨트롤러에 둔다
+- **ClickHouse 적재나 Python 배치 뒤에는 이 엔드포인트를 부르거나 컨테이너를 다시 시작한다.** 그래야 새 데이터와 새 몬스터 목록이 보인다(안 하면 `CACHE_TTL_MS`, 기본 1시간 뒤에 바뀐다)
 
 ### 나중에 추가할 키
 
-| 키                 | 비밀     | 용도                                                                                |
-| ------------------ | -------- | ----------------------------------------------------------------------------------- |
-| `API_KEYS`         | **비밀** | Next(Vercel)가 API를 부를 때의 키. 쉼표로 두 개까지 받아 교체할 때 중단이 없게 한다 |
-| `REVALIDATE_TOKEN` | **비밀** | 적재·배치 후 캐시를 비우는 운영 요청용 토큰                                         |
-| S3 위치            | 아님     | 미리 계산 JSON을 S3에서 읽게 되면 추가한다. 지금은 폴더만 읽는다                    |
+| 키      | 비밀 | 용도                                                             |
+| ------- | ---- | ---------------------------------------------------------------- |
+| S3 위치 | 아님 | 미리 계산 JSON을 S3에서 읽게 되면 추가한다. 지금은 폴더만 읽는다 |
 
 ## 2. 로컬 설정
 
@@ -63,7 +71,7 @@
 
 ## 5. Vercel (front-demo)
 
-- `BACKEND_URL`과 API 키를 **Production** 환경 변수에 둔다
+- `BACKEND_URL`과 API 키를 **Production** 환경 변수에 둔다. 키는 `API_KEYS` 중 하나이며 서버 쪽 코드에서만 `x-api-key` 헤더로 보낸다(브라우저 노출 금지, `NEXT_PUBLIC_` 접두어 금지)
 
 ## 6. GitHub Actions
 

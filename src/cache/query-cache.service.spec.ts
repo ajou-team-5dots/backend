@@ -7,8 +7,9 @@ import { MAX_CACHE_ENTRIES, QueryCacheService } from './query-cache.service.js';
 const TTL_MS = 60_000;
 
 const makeCache = (): QueryCacheService => {
-  // Only CACHE_TTL_MS is read; a stub keeps the test free of env validation.
-  const config = { get: () => TTL_MS } as unknown as ConfigService<Env, true>;
+  // Only CACHE_TTL_MS is read; a stub keeps env validation out of the test.
+  const values: Partial<Env> = { CACHE_TTL_MS: TTL_MS };
+  const config = { get: (key: keyof Env) => values[key] } as unknown as ConfigService<Env, true>;
   return new QueryCacheService(config);
 };
 
@@ -164,8 +165,9 @@ describe('QueryCacheService', () => {
           finish = resolve;
         }),
     );
+    // Two TTLs of loading: measured from the start, the result would already be expired.
     await vi.advanceTimersByTimeAsync(TTL_MS * 2);
-    // Still loading after two TTLs: a second call shares the pending load instead of starting one.
+    // Still loading: a second call shares the pending load instead of starting one.
     const load = vi.fn().mockResolvedValue('second');
     const again = cache.wrap(['slow'], load);
     finish('first');
@@ -221,5 +223,18 @@ describe('QueryCacheService', () => {
     expect(await cache.wrap(['k0'], load)).toBe('again');
     expect(await cache.wrap([`k${MAX_CACHE_ENTRIES}`], load)).toBe(`k${MAX_CACHE_ENTRIES}`);
     expect(load).toHaveBeenCalledOnce();
+  });
+
+  it('set은 값을 얼려 바로 기억하고, 같은 키의 이전 값을 바꾼다', async () => {
+    const cache = makeCache();
+    await cache.wrap(['list'], () => Promise.resolve(['old']));
+    const value = ['new'];
+
+    cache.set(['list'], value);
+
+    expect(Object.isFrozen(value)).toBe(true);
+    const load = vi.fn().mockResolvedValue(['loaded']);
+    expect(await cache.wrap(['list'], load)).toEqual(['new']);
+    expect(load).not.toHaveBeenCalled();
   });
 });

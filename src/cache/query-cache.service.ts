@@ -14,10 +14,18 @@ export const MAX_CACHE_ENTRIES = 5_000;
 export type CacheKeyPart = string | number | boolean | bigint | null | undefined;
 
 interface Entry {
-  /** Infinity while loading: a pending load is never treated as expired. */
-  expiresAt: number;
+  /** Set once the load succeeded; until then the entry is pending. */
+  expiresAt?: number;
   value: Promise<unknown>;
 }
+
+/**
+ * A finished entry lives for the TTL. A pending one is always fresh: every load is a ClickHouse
+ * query or a file read that settles on its own (the client's request_timeout ends a hung query),
+ * and a failure removes the entry.
+ */
+const isFresh = (entry: Entry, now: number): boolean =>
+  entry.expiresAt === undefined || entry.expiresAt > now;
 
 /**
  * Turns a key into a Map id. Each part carries its type, so values that JSON.stringify would merge
@@ -54,8 +62,8 @@ const keyId = (key: readonly CacheKeyPart[]): string =>
  * loading share that one promise, so `Promise.all` over functions that need the same aggregate
  * sends one query, not several. Failures are not remembered. Results are deep-frozen: every
  * request gets the same object, so copy before changing it. When full, expired entries go first,
- * then the least recently used. Everything is dropped at once by `clear()` after a load or batch
- * run (front-demo also cleared both of its tags together).
+ * then the least recently used. Everything is dropped at once by `clear()` after a ClickHouse
+ * load (front-demo also cleared both of its tags together).
  */
 @Injectable()
 export class QueryCacheService {
@@ -81,8 +89,9 @@ export class QueryCacheService {
       return Promise.reject(error instanceof Error ? error : new Error(String(error)));
     }
 
+    const now = Date.now();
     const hit = this.entries.get(id);
-    if (hit && hit.expiresAt > Date.now()) {
+    if (hit && isFresh(hit, now)) {
       this.entries.delete(id);
       this.entries.set(id, hit);
       // Safe: the key starts with the caller's name, and that caller always stores a T.
@@ -90,26 +99,38 @@ export class QueryCacheService {
     }
 
     this.entries.delete(id);
-    const entry: Entry = { expiresAt: Number.POSITIVE_INFINITY, value: Promise.resolve() };
+    const entry: Entry = { value: Promise.resolve() };
     const value = Promise.resolve()
       .then(load)
-      .then(
-        (result) => {
-          entry.expiresAt = Date.now() + this.ttlMs;
-          return deepFreeze(result);
-        },
-        (error: unknown) => {
-          // Only drop our own entry: clear() and a later reload may already have replaced it.
-          if (this.entries.get(id) === entry) {
-            this.entries.delete(id);
-          }
-          throw error;
-        },
-      );
+      .then((result) => {
+        // Freeze first: if freezing throws, the entry must not count as loaded.
+        const frozen = deepFreeze(result);
+        entry.expiresAt = Date.now() + this.ttlMs;
+        return frozen;
+      })
+      .catch((error: unknown) => {
+        // Only drop our own entry: clear() and a later reload may already have replaced it.
+        if (this.entries.get(id) === entry) {
+          this.entries.delete(id);
+        }
+        throw error;
+      });
     entry.value = value;
     this.entries.set(id, entry);
     this.evictOverflow();
     return value;
+  }
+
+  /**
+   * Stores a value loaded elsewhere under `key`, replacing what was there (as if `wrap` had just
+   * loaded it). For refreshes that must keep the old value until the new one has arrived.
+   */
+  set(key: readonly CacheKeyPart[], value: unknown): void {
+    const id = keyId(key);
+    const frozen = deepFreeze(value);
+    this.entries.delete(id);
+    this.entries.set(id, { expiresAt: Date.now() + this.ttlMs, value: Promise.resolve(frozen) });
+    this.evictOverflow();
   }
 
   /** Drops every remembered result. Returns how many there were. */
@@ -129,7 +150,7 @@ export class QueryCacheService {
     }
     const now = Date.now();
     this.entries.forEach((entry, id) => {
-      if (entry.expiresAt <= now) {
+      if (!isFresh(entry, now)) {
         this.entries.delete(id);
       }
     });

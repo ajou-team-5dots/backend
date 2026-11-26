@@ -1,4 +1,4 @@
-import { createClient } from '@clickhouse/client';
+import { ClickHouseLogLevel, createClient } from '@clickhouse/client';
 import { Module } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 
@@ -21,6 +21,9 @@ import { ClickHouseService } from './clickhouse.service.js';
           password: config.get('CLICKHOUSE_PASSWORD', { infer: true }),
           database: config.get('CLICKHOUSE_DB', { infer: true }),
           request_timeout: config.get('CLICKHOUSE_REQUEST_TIMEOUT_MS', { infer: true }),
+          // The client's own logger prints the server address, port and stack on a refused
+          // connection. ClickHouseService logs the error kind and code instead.
+          log: { level: ClickHouseLogLevel.OFF },
           // No clickhouse_settings: the production `api` user is readonly=2, and sending a
           // `readonly` setting from the client is rejected by the server.
         }),

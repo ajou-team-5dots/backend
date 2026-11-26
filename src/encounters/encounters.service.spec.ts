@@ -1,30 +1,36 @@
-import { NotFoundException } from '@nestjs/common';
 import type { ConfigService } from '@nestjs/config';
 
 import { QueryCacheService } from '../cache/query-cache.service.js';
 import type { ClickHouseService } from '../clickhouse/clickhouse.service.js';
 import type { Env } from '../config/env.schema.js';
 
-import { EncountersService } from './encounters.service.js';
+import { EncountersService, KNOWN_MONSTERS_REFRESH_MS } from './encounters.service.js';
 
 const KNOWN = [{ monster: 'small_zombie' }, { monster: 'blink_imp' }];
+const CONFIG: Partial<Env> = { CACHE_TTL_MS: 3_600_000, CLICKHOUSE_REQUEST_TIMEOUT_MS: 10_000 };
 
 /** Answers the known-monster query with KNOWN and the count query with `count`. */
 const setup = (count: { encounters: number }[] = [{ encounters: 4429 }]) => {
+  let known = KNOWN;
   const query = vi.fn((sql: string) =>
-    Promise.resolve(sql.includes('DISTINCT monster_id') ? KNOWN : count),
+    Promise.resolve(sql.includes('DISTINCT monster_id') ? known : count),
   );
-  const config = { get: () => 60_000 } as unknown as ConfigService<Env, true>;
-  const service = new EncountersService(
-    { query } as unknown as ClickHouseService,
-    new QueryCacheService(config),
-  );
+  /** Simulates a data load that adds monsters to the table. */
+  const addMonster = (monster: string) => {
+    known = [...known, { monster }];
+  };
+  const config = {
+    get: (key: keyof Env) => CONFIG[key],
+  } as unknown as ConfigService<Env, true>;
+  const cache = new QueryCacheService(config);
+  const service = new EncountersService({ query } as unknown as ClickHouseService, cache);
   const countCalls = () =>
     query.mock.calls.filter(([sql]) => sql.includes('count()')) as unknown as [
       string,
       Record<string, unknown>,
     ][];
-  return { service, query, countCalls };
+  const listCalls = () => query.mock.calls.filter(([sql]) => sql.includes('DISTINCT')).length;
+  return { service, query, cache, countCalls, listCalls, addMonster };
 };
 
 describe('EncountersService', () => {
@@ -37,7 +43,7 @@ describe('EncountersService', () => {
       period: 'current',
     });
 
-    expect(result).toEqual({ monster: 'small_zombie', encounters: 4429 });
+    expect(result).toEqual({ monster: 'small_zombie', encounters: 4429, known: true });
     const [[sql, params]] = countCalls();
     expect(sql).toContain('monster_id = {monster:String}');
     expect(sql).not.toContain('small_zombie');
@@ -53,7 +59,7 @@ describe('EncountersService', () => {
       period: 'all',
     });
 
-    expect(result).toEqual({ monster: 'blink_imp', encounters: 0 });
+    expect(result).toEqual({ monster: 'blink_imp', encounters: 0, known: true });
   });
 
   it('같은 조건은 캐시에서 돌려주고, 조건이 다르면 다시 조회한다', async () => {
@@ -69,12 +75,101 @@ describe('EncountersService', () => {
     expect(query.mock.calls.filter(([sql]) => sql.includes('DISTINCT'))).toHaveLength(1);
   });
 
-  it('모르는 몬스터는 404이고, 교전 수를 조회하지도 캐시하지도 않는다', async () => {
-    const { service, countCalls } = setup();
+  it('모르는 몬스터는 0이고, 교전 수를 조회하지도 캐시하지도 않는다', async () => {
+    const { service, cache, countCalls } = setup();
+    await service.countByMonster({ monster: 'small_zombie', heavy: 'include', period: 'current' });
+    const sizeBefore = cache.size;
 
-    await expect(
-      service.countByMonster({ monster: 'nobody', heavy: 'include', period: 'current' }),
-    ).rejects.toBeInstanceOf(NotFoundException);
-    expect(countCalls()).toHaveLength(0);
+    const result = await service.countByMonster({
+      monster: 'nobody',
+      heavy: 'include',
+      period: 'current',
+    });
+
+    expect(result).toEqual({ monster: 'nobody', encounters: 0, known: false });
+    expect(countCalls()).toHaveLength(1);
+    expect(cache.size).toBe(sizeBefore);
+  });
+
+  describe('모르는 ID가 오면 몬스터 목록을 다시 읽는다', () => {
+    afterEach(() => {
+      vi.useRealTimers();
+    });
+
+    it(`${KNOWN_MONSTERS_REFRESH_MS}ms 안에는 DB를 다시 부르지 않는다`, async () => {
+      vi.useFakeTimers();
+      const { service, query } = setup();
+      const dto = { monster: 'nobody', heavy: 'include', period: 'current' } as const;
+      await service.countByMonster(dto);
+      query.mockClear();
+
+      await vi.advanceTimersByTimeAsync(KNOWN_MONSTERS_REFRESH_MS - 1);
+      await service.countByMonster(dto);
+      await service.countByMonster({ ...dto, monster: 'another' });
+
+      expect(query).not.toHaveBeenCalled();
+    });
+
+    it('간격이 지나면 다시 읽어, 새로 적재된 몬스터는 known: true로 센다', async () => {
+      vi.useFakeTimers();
+      const { service, listCalls, addMonster } = setup();
+      const dto = { monster: 'new_boss', heavy: 'include', period: 'current' } as const;
+      expect(await service.countByMonster(dto)).toEqual({
+        monster: 'new_boss',
+        encounters: 0,
+        known: false,
+      });
+
+      addMonster('new_boss');
+      await vi.advanceTimersByTimeAsync(KNOWN_MONSTERS_REFRESH_MS);
+
+      expect(await service.countByMonster(dto)).toEqual({
+        monster: 'new_boss',
+        encounters: 4429,
+        known: true,
+      });
+      expect(listCalls()).toBe(2);
+    });
+
+    it('다시 읽기가 실패하면 그 요청만 실패하고, 기존 목록으로 계속 센다', async () => {
+      vi.useFakeTimers();
+      const { service, query, listCalls } = setup();
+      const base = { heavy: 'include', period: 'current' } as const;
+      await service.countByMonster({ ...base, monster: 'small_zombie' });
+      await vi.advanceTimersByTimeAsync(KNOWN_MONSTERS_REFRESH_MS);
+      const original = query.getMockImplementation();
+      query.mockImplementation((sql: string) =>
+        sql.includes('DISTINCT') ? Promise.reject(new Error('db down')) : original!(sql),
+      );
+
+      await expect(service.countByMonster({ ...base, monster: 'nobody' })).rejects.toThrow(
+        'db down',
+      );
+
+      expect(listCalls()).toBe(2);
+      expect(await service.countByMonster({ ...base, monster: 'small_zombie' })).toEqual({
+        monster: 'small_zombie',
+        encounters: 4429,
+        known: true,
+      });
+      expect(await service.countByMonster({ ...base, monster: 'blink_imp' })).toMatchObject({
+        known: true,
+      });
+    });
+
+    it('간격이 지난 뒤 모르는 ID가 한꺼번에 와도 목록은 한 번만 읽는다', async () => {
+      vi.useFakeTimers();
+      const { service, listCalls } = setup();
+      const base = { heavy: 'include', period: 'current' } as const;
+      await service.countByMonster({ ...base, monster: 'small_zombie' });
+      await vi.advanceTimersByTimeAsync(KNOWN_MONSTERS_REFRESH_MS);
+
+      const results = await Promise.all(
+        ['a', 'b', 'c', 'd', 'e'].map((monster) => service.countByMonster({ ...base, monster })),
+      );
+
+      expect(results.every((result) => !result.known)).toBe(true);
+      expect(listCalls()).toBe(2);
+    });
   });
 });

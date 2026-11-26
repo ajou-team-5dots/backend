@@ -4,7 +4,10 @@ import request from 'supertest';
 
 import { AppModule } from '../src/app.module.js';
 import { configureApp } from '../src/app.setup.js';
+import { API_KEY_HEADER } from '../src/security/api-key.guard.js';
 import { ClickHouseService } from '../src/clickhouse/clickhouse.service.js';
+
+import { TEST_API_KEY } from './test-env.js';
 
 // No database: ClickHouseService is replaced, so this runs in `pnpm check` and CI.
 describe('health (e2e)', () => {
@@ -36,11 +39,18 @@ describe('health (e2e)', () => {
 
   it('GET /health/db → DB에 닿으면 200', async () => {
     isReachable.mockResolvedValueOnce(true);
-    await request(app.getHttpServer()).get('/health/db').expect(200).expect({ status: 'ok' });
+    await request(app.getHttpServer())
+      .get('/health/db')
+      .set(API_KEY_HEADER, TEST_API_KEY)
+      .expect(200)
+      .expect({ status: 'ok' });
   });
 
   it('GET /health/db → DB에 못 닿으면 503', async () => {
     isReachable.mockResolvedValueOnce(false);
-    await request(app.getHttpServer()).get('/health/db').expect(503);
+    await request(app.getHttpServer())
+      .get('/health/db')
+      .set(API_KEY_HEADER, TEST_API_KEY)
+      .expect(503);
   });
 });

@@ -3,6 +3,8 @@ import { Test } from '@nestjs/testing';
 import request from 'supertest';
 
 import { AppModule } from '../../src/app.module.js';
+import { API_KEY_HEADER } from '../../src/security/api-key.guard.js';
+import { TEST_API_KEY } from '../test-env.js';
 
 // Needs a real ClickHouse (CLICKHOUSE_* in .env). Run with `pnpm test:db`; not part of
 // `pnpm check` or CI. The DB is shared, so keep this to a couple of light queries.
@@ -20,13 +22,18 @@ describe('ClickHouse (실제 DB)', () => {
   });
 
   it('GET /health/db → 200', async () => {
-    await request(app.getHttpServer()).get('/health/db').expect(200).expect({ status: 'ok' });
+    await request(app.getHttpServer())
+      .get('/health/db')
+      .set(API_KEY_HEADER, TEST_API_KEY)
+      .expect(200)
+      .expect({ status: 'ok' });
   });
 
   it('small_zombie 교전 4,429 (고활동 포함, 현재 수치: front와 같은 조건)', async () => {
     await request(app.getHttpServer())
       .get('/encounters/count?monster=small_zombie')
+      .set(API_KEY_HEADER, TEST_API_KEY)
       .expect(200)
-      .expect({ monster: 'small_zombie', encounters: 4429 });
+      .expect({ monster: 'small_zombie', encounters: 4429, known: true });
   });
 });
