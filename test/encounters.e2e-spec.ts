@@ -1,13 +1,14 @@
-import type { INestApplication } from '@nestjs/common';
+import type { NestExpressApplication } from '@nestjs/platform-express';
 import { Test } from '@nestjs/testing';
 import request from 'supertest';
 
 import { AppModule } from '../src/app.module.js';
+import { configureApp } from '../src/app.setup.js';
 import { ClickHouseService } from '../src/clickhouse/clickhouse.service.js';
 
 // No database: checks routing and query validation with a stubbed ClickHouseService.
 describe('GET /encounters/count (e2e)', () => {
-  let app: INestApplication;
+  let app: NestExpressApplication;
   const query = vi.fn();
 
   beforeAll(async () => {
@@ -16,7 +17,7 @@ describe('GET /encounters/count (e2e)', () => {
       .useValue({ query, onApplicationShutdown: vi.fn() })
       .compile();
 
-    app = moduleRef.createNestApplication();
+    app = configureApp(moduleRef.createNestApplication<NestExpressApplication>());
     await app.init();
   });
 
