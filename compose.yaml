@@ -1,0 +1,28 @@
+# Server deploy: docker compose up -d --build (see docs/DEPLOY.md).
+services:
+  backend:
+    build: .
+    image: 5dots-backend:latest
+    # Created once by hand on the server (chmod 600). Deploys never touch it. See docs/ENV.md.
+    env_file: /opt/backend/.env
+    restart: unless-stopped
+    # Internal test only: the security group admits just the team's IPs on 3000.
+    # Once a reverse proxy (Caddy) sits in front, bind to loopback: "127.0.0.1:3000:3000".
+    ports:
+      - '3000:3000'
+    healthcheck:
+      # The slim image has no curl, so probe with Node's built-in fetch.
+      test:
+        - CMD
+        - node
+        - -e
+        - "fetch('http://localhost:3000/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 20s
+    logging:
+      driver: json-file
+      options:
+        max-size: 10m
+        max-file: '3'

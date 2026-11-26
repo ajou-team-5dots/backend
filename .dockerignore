@@ -1,0 +1,20 @@
+# Secrets never enter the build context: the server reads /opt/backend/.env through compose.
+.env*
+!.env.example
+*.pem
+
+# Rebuilt inside the image
+node_modules
+dist
+*.tsbuildinfo
+
+# Not needed to build or run
+.git
+.github
+.husky
+.vscode
+.idea
+coverage
+test-results
+*.log
+.DS_Store

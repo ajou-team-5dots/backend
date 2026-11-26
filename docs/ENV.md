@@ -62,6 +62,8 @@
 
 ## 4. 운영 EC2
 
+배포 절차는 [DEPLOY.md](./DEPLOY.md)에 있다.
+
 - 서버에 `/opt/backend/.env`를 **한 번 직접 만들고** `chmod 600`으로 둔다
 - `docker compose`의 `env_file`로 읽는다. **배포는 이 파일을 건드리지 않는다**
 - 값을 바꾸면 서버에서 파일을 고치고 컨테이너를 다시 시작한다
