@@ -2,6 +2,7 @@ import { mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 
+import { Logger, ServiceUnavailableException } from '@nestjs/common';
 import type { ConfigService } from '@nestjs/config';
 
 import { QueryCacheService } from '../cache/query-cache.service.js';
@@ -30,6 +31,7 @@ describe('PrecomputedService', () => {
   });
 
   afterEach(async () => {
+    vi.restoreAllMocks();
     await rm(dir, { recursive: true, force: true });
   });
 
@@ -81,15 +83,38 @@ describe('PrecomputedService', () => {
     await expect(service.read('Meta')).rejects.toThrow('잘못된 미리 계산 파일 이름');
   });
 
-  it('읽지 못하면 파일 이름과 오류 코드만 알려 주고 폴더 경로는 넣지 않는다', async () => {
+  it('읽지 못하면 고정 문구의 503을 던지고, 로그에는 파일 이름과 오류 코드만 남긴다', async () => {
+    const logged = vi.spyOn(Logger.prototype, 'error').mockImplementation(() => undefined);
     const { service } = setup(dir);
     await writeFile(path.join(dir, 'broken.json'), '{ not json');
 
     const missing: unknown = await service.read('missing').catch((e: unknown) => e);
     const broken: unknown = await service.read('broken').catch((e: unknown) => e);
 
-    expect((missing as Error).message).toContain('missing.json (ENOENT)');
-    expect((broken as Error).message).toContain('broken.json (SyntaxError)');
-    expect((missing as Error).message).not.toContain(dir);
+    expect(missing).toBeInstanceOf(ServiceUnavailableException);
+    expect(broken).toBeInstanceOf(ServiceUnavailableException);
+    expect((missing as Error).message).toBe('미리 계산 데이터를 사용할 수 없습니다.');
+    const lines = logged.mock.calls.map(([line]) => String(line));
+    expect(lines).toEqual([
+      expect.stringContaining('missing.json (ENOENT)'),
+      expect.stringContaining('broken.json (SyntaxError)'),
+    ]);
+    expect(lines.join('\n')).not.toContain(dir);
+  });
+
+  it('시각을 읽지 못한 패치는 빼고 정렬한다', async () => {
+    vi.spyOn(Logger.prototype, 'warn').mockImplementation(() => undefined);
+    const patches: MonsterPatch[] = [
+      { id: 'late', ts: '2026-10-18T10:00:00+09:00', kind: 'monster', label: 'late' },
+      { id: 'bad', ts: 'not a date', kind: 'monster', label: 'bad' },
+      { id: 'early', ts: '2026-10-14T14:40:00+09:00', kind: 'monster', label: 'early' },
+    ];
+    await writeFile(path.join(dir, 'patches.json'), JSON.stringify(patches));
+    const { service } = setup(dir);
+
+    expect((await service.readMonsterPatches()).map((patch) => patch.id)).toEqual([
+      'early',
+      'late',
+    ]);
   });
 });
