@@ -12,6 +12,9 @@ const VALID = {
 
 const KEY_A = 'a'.repeat(32);
 const KEY_B = 'b'.repeat(40);
+// Shaped like `openssl rand -hex 32`, as production requires. Not real secrets.
+const HEX_KEY = '0123456789abcdef'.repeat(4);
+const HEX_TOKEN = 'fedcba9876543210'.repeat(4);
 
 const errorOf = (raw: Record<string, unknown>): string => {
   try {
@@ -137,11 +140,44 @@ describe('validateEnv', () => {
     const env = validateEnv({
       ...VALID,
       NODE_ENV: 'production',
-      API_KEYS: KEY_A,
-      REVALIDATE_TOKEN: KEY_B,
+      API_KEYS: HEX_KEY,
+      REVALIDATE_TOKEN: HEX_TOKEN,
     });
-    expect(env.API_KEYS).toEqual([KEY_A]);
-    expect(env.REVALIDATE_TOKEN).toBe(KEY_B);
+    expect(env.API_KEYS).toEqual([HEX_KEY]);
+    expect(env.REVALIDATE_TOKEN).toBe(HEX_TOKEN);
+  });
+
+  it('production에서는 openssl rand -hex 32 형태(64자 소문자 hex)만 받는다', () => {
+    // KEY_A/KEY_B are long enough for development but not hex: e.g. a test key from this repo.
+    const message = errorOf({
+      ...VALID,
+      NODE_ENV: 'production',
+      API_KEYS: `${HEX_KEY},${KEY_B}`,
+      REVALIDATE_TOKEN: HEX_TOKEN.toUpperCase(),
+    });
+    expect(message).toContain('API_KEYS(형식 오류');
+    expect(message).toContain('REVALIDATE_TOKEN(형식 오류');
+    expect(message).not.toContain(KEY_B);
+    expect(message).not.toContain(HEX_TOKEN.toUpperCase());
+  });
+
+  it('REVALIDATE_TOKEN이 API 키와 같으면 거부한다', () => {
+    expect(errorOf({ ...VALID, API_KEYS: `${KEY_A},${KEY_B}`, REVALIDATE_TOKEN: KEY_B })).toContain(
+      'REVALIDATE_TOKEN(API_KEYS와 같음)',
+    );
+  });
+
+  it('공백만 있는 필수 키는 "없음"으로 알린다', () => {
+    expect(errorOf({ ...VALID, CLICKHOUSE_PASSWORD: '   ' })).toContain(
+      'CLICKHOUSE_PASSWORD(없음)',
+    );
+  });
+
+  it('다른 키가 틀려도 production 필수 키 문제를 한 번에 알린다', () => {
+    const message = errorOf({ ...VALID, NODE_ENV: 'production', CLICKHOUSE_URL: 'not a url' });
+    expect(message).toContain('CLICKHOUSE_URL(형식 오류)');
+    expect(message).toContain('API_KEYS(없음)');
+    expect(message).toContain('REVALIDATE_TOKEN(없음)');
   });
 
   it('REVALIDATE_TOKEN은 개발에서 비워 둘 수 있고, 짧으면 거부하며 값은 출력하지 않는다', () => {

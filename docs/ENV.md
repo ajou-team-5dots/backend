@@ -6,6 +6,8 @@
 환경 변수 설정 오류: CLICKHOUSE_URL(없음), PORT(형식 오류). .env.example과 docs/ENV.md를 확인하세요.
 ```
 
+문제가 여러 개면 한 번에 모두 알려 준다. 공백만 있는 값은 "없음"으로 본다.
+
 `process.env`는 `src/config/` 밖에서 읽지 않는다(lint 에러). 다른 코드는 `ConfigService`로 받는다.
 
 ## 1. 키 목록
@@ -28,11 +30,13 @@
 - **개발과 운영은 `CLICKHOUSE_URL` 하나만 다르다.** 코드는 그대로 둔다
 - `api` 계정은 readonly=2다. 클라이언트는 `readonly` 설정을 보내지 않는다(보내면 서버가 거부한다)
 - 선택 키는 `.env.example`처럼 `KEY=`로 비워 두면 기본값을 쓴다
+- `CLICKHOUSE_REQUEST_TIMEOUT_MS`: ClickHouse 요청 제한 시간. 캐시는 같은 조회가 이 시간 + 5초를 넘겨도 끝나지 않으면 멈춘 것으로 보고 다음 요청이 새로 조회한다
 - `PRECOMPUTED_DIR`: Python 배치가 쓴 `<이름>.json`(`meta`, `patches`, `expected-risk`, `pentagon`, `h2-same-condition`)이 있는 폴더. 비워 두면 기본값은 **프로젝트 루트의 `data/precomputed`** 다. 테스트, `pnpm start:prod`, Docker 이미지의 `/app` 등 어디서 실행하든 같은 폴더를 가리킨다. 값을 직접 적을 때 상대 경로는 실행 위치 기준이므로 절대 경로를 권한다
 - `CACHE_TTL_MS`: ClickHouse 조회와 미리 계산 JSON을 프로세스 메모리에 기억하는 시간. 적재·배치 직후에는 캐시를 비워야 새 값이 보인다(`REVALIDATE_TOKEN` 항목 참고)
-- `API_KEYS`: `/health`를 뺀 모든 요청은 `x-api-key` 헤더가 이 중 하나와 같아야 한다. 없거나 틀리면 401(둘 다 같은 문구). `/health/db`도 키가 필요하다. 키는 쉼표로 두 개까지 받아, 새 키를 더하고 → Vercel 값을 바꾸고 → 옛 키를 빼는 순서로 중단 없이 바꾼다. 개발에서 비우면 검사를 끄고 시작할 때 경고 로그를 한 줄 남긴다. production에서 비우면 시작하지 않는다
+- `API_KEYS`: `/health`를 뺀 모든 요청은 `x-api-key` 헤더가 이 중 하나와 같아야 한다. 없거나 틀리면 401(둘 다 같은 문구). `/health/db`도 키가 필요하다. 키는 쉼표로 두 개까지 받아, 새 키를 더하고 → Vercel 값을 바꾸고 → 옛 키를 빼는 순서로 중단 없이 바꾼다. 개발에서 비우면 검사를 끄고 시작할 때 경고 로그를 한 줄 남긴다. production에서 비우면 시작하지 않는다. production에서는 각 키가 64자 소문자 hex(`openssl rand -hex 32` 결과)여야 한다. 손으로 친 값이나 이 공개 저장소의 테스트 키는 거부한다
 - **요청 제한은 두지 않는다.** API 키 검사가 DB에 닿기 전에 걸러 내고, 사용자별 제한이 필요하면 Vercel(Next 서버) 쪽에서 한다
-- `REVALIDATE_TOKEN`: `POST /admin/cache/clear`만 이 토큰(헤더 `x-revalidate-token`)으로 연다. API 키로는 열리지 않고, 이 토큰으로 다른 경로가 열리지도 않는다. 없거나 틀리면 401. 응답은 `{"cleared": <비운 항목 수>}`
+- `REVALIDATE_TOKEN`: `POST /admin/cache/clear`만 이 토큰(헤더 `x-revalidate-token`)으로 연다. API 키로는 열리지 않고, 이 토큰으로 다른 경로가 열리지도 않는다. 없거나 틀리면 401. 응답은 `{"cleared": <비운 항목 수>}`. production에서는 같은 64자 hex 규칙이 적용되며, **어느 환경이든 `API_KEYS` 중 하나와 같으면 시작하지 않는다**(`REVALIDATE_TOKEN(API_KEYS와 같음)`)
+- **`/admin/*` 경로는 API 키 대신 `REVALIDATE_TOKEN`으로 보호된다.** `AdminController` 전체가 API 키 검사에서 빠지므로, admin에 경로를 더하면 그 경로도 운영 토큰만으로 열린다. Next 서버(API 키)가 불러야 하는 경로는 admin이 아니라 기능 컨트롤러에 둔다
 - **ClickHouse 적재나 Python 배치 뒤에는 이 엔드포인트를 부르거나 컨테이너를 다시 시작한다.** 그래야 새 데이터와 새 몬스터 목록이 보인다(안 하면 `CACHE_TTL_MS`, 기본 1시간 뒤에 바뀐다)
 
 ### 나중에 추가할 키

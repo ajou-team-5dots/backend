@@ -14,7 +14,8 @@ import type { HeavyResults, MonsterPatch, PentagonResult } from './precomputed.t
 const configWith = (values: Partial<Env>): ConfigService<Env, true> =>
   // Only PRECOMPUTED_DIR and CACHE_TTL_MS are read; a stub keeps env validation out of the test.
   ({
-    get: (key: keyof Env) => ({ CACHE_TTL_MS: 60_000, ...values })[key],
+    get: (key: keyof Env) =>
+      ({ CACHE_TTL_MS: 60_000, CLICKHOUSE_REQUEST_TIMEOUT_MS: 10_000, ...values })[key],
   }) as unknown as ConfigService<Env, true>;
 
 const setup = (dir: string) => {

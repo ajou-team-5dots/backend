@@ -34,6 +34,6 @@ describe('ClickHouse (실제 DB)', () => {
       .get('/encounters/count?monster=small_zombie')
       .set(API_KEY_HEADER, TEST_API_KEY)
       .expect(200)
-      .expect({ monster: 'small_zombie', encounters: 4429 });
+      .expect({ monster: 'small_zombie', encounters: 4429, known: true });
   });
 });

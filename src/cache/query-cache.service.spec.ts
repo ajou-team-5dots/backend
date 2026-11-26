@@ -2,13 +2,16 @@ import type { ConfigService } from '@nestjs/config';
 
 import type { Env } from '../config/env.schema.js';
 
-import { MAX_CACHE_ENTRIES, MAX_PENDING_MS, QueryCacheService } from './query-cache.service.js';
+import { MAX_CACHE_ENTRIES, PENDING_GRACE_MS, QueryCacheService } from './query-cache.service.js';
 
 const TTL_MS = 60_000;
+const TIMEOUT_MS = 10_000;
+const PENDING_LIMIT_MS = TIMEOUT_MS + PENDING_GRACE_MS;
 
 const makeCache = (): QueryCacheService => {
-  // Only CACHE_TTL_MS is read; a stub keeps the test free of env validation.
-  const config = { get: () => TTL_MS } as unknown as ConfigService<Env, true>;
+  // Only the TTL and the request timeout are read; a stub keeps env validation out of the test.
+  const values: Partial<Env> = { CACHE_TTL_MS: TTL_MS, CLICKHOUSE_REQUEST_TIMEOUT_MS: TIMEOUT_MS };
+  const config = { get: (key: keyof Env) => values[key] } as unknown as ConfigService<Env, true>;
   return new QueryCacheService(config);
 };
 
@@ -165,7 +168,7 @@ describe('QueryCacheService', () => {
         }),
     );
     // Half a TTL of loading: measured from the start, the result would expire half a TTL early.
-    await vi.advanceTimersByTimeAsync(Math.min(TTL_MS / 2, MAX_PENDING_MS - 1));
+    await vi.advanceTimersByTimeAsync(Math.min(TTL_MS / 2, PENDING_LIMIT_MS - 1));
     // Still loading: a second call shares the pending load instead of starting one.
     const load = vi.fn().mockResolvedValue('second');
     const again = cache.wrap(['slow'], load);
@@ -180,7 +183,7 @@ describe('QueryCacheService', () => {
     expect(await cache.wrap(['slow'], load)).toBe('second');
   });
 
-  it(`${MAX_PENDING_MS}ms 넘게 끝나지 않는 불러오기는 버리고 새로 불러온다`, async () => {
+  it(`${PENDING_LIMIT_MS}ms(타임아웃 + 여유) 넘게 끝나지 않는 불러오기는 버리고 새로 불러온다`, async () => {
     vi.useFakeTimers();
     const cache = makeCache();
     const stuck = cache.wrap(
@@ -192,7 +195,7 @@ describe('QueryCacheService', () => {
     );
     const load = vi.fn().mockResolvedValue('fresh');
 
-    await vi.advanceTimersByTimeAsync(MAX_PENDING_MS - 1);
+    await vi.advanceTimersByTimeAsync(PENDING_LIMIT_MS - 1);
     const waiting = cache.wrap(['stuck'], load);
     expect(load).not.toHaveBeenCalled();
     expect(waiting).toBe(stuck);

@@ -47,7 +47,7 @@ describe('GET /encounters/count (e2e)', () => {
       .get('/encounters/count?monster=small_zombie')
       .set(API_KEY_HEADER, TEST_API_KEY)
       .expect(200)
-      .expect({ monster: 'small_zombie', encounters: 4429 });
+      .expect({ monster: 'small_zombie', encounters: 4429, known: true });
 
     expect(query.mock.lastCall?.[1]).toEqual({
       monster: 'small_zombie',
@@ -56,7 +56,7 @@ describe('GET /encounters/count (e2e)', () => {
     });
   });
 
-  it('모르는 몬스터는 200, 0이고 DB도 캐시도 거치지 않는다', async () => {
+  it('모르는 몬스터는 200, 0, known: false이고 다시 읽기 간격 안에서는 DB도 캐시도 거치지 않는다', async () => {
     const server = app.getHttpServer();
     // Load the known-monster list first, then watch the unknown id alone.
     await request(server)
@@ -70,7 +70,17 @@ describe('GET /encounters/count (e2e)', () => {
       .get('/encounters/count?monster=nobody')
       .set(API_KEY_HEADER, TEST_API_KEY)
       .expect(200)
-      .expect({ monster: 'nobody', encounters: 0 });
+      .expect({ monster: 'nobody', encounters: 0, known: false });
+
+    // Repeats inside the refresh interval (other made-up ids too) do not reach the DB either.
+    await Promise.all(
+      ['nobody', 'nobody', 'made_up_1', 'made_up_2'].map((id) =>
+        request(server)
+          .get(`/encounters/count?monster=${id}`)
+          .set(API_KEY_HEADER, TEST_API_KEY)
+          .expect(200),
+      ),
+    );
 
     expect(query).not.toHaveBeenCalled();
     expect(cache.size).toBe(sizeBefore);
