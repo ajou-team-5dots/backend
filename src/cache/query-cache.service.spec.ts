@@ -2,15 +2,13 @@ import type { ConfigService } from '@nestjs/config';
 
 import type { Env } from '../config/env.schema.js';
 
-import { MAX_CACHE_ENTRIES, PENDING_GRACE_MS, QueryCacheService } from './query-cache.service.js';
+import { MAX_CACHE_ENTRIES, QueryCacheService } from './query-cache.service.js';
 
 const TTL_MS = 60_000;
-const TIMEOUT_MS = 10_000;
-const PENDING_LIMIT_MS = TIMEOUT_MS + PENDING_GRACE_MS;
 
 const makeCache = (): QueryCacheService => {
-  // Only the TTL and the request timeout are read; a stub keeps env validation out of the test.
-  const values: Partial<Env> = { CACHE_TTL_MS: TTL_MS, CLICKHOUSE_REQUEST_TIMEOUT_MS: TIMEOUT_MS };
+  // Only CACHE_TTL_MS is read; a stub keeps env validation out of the test.
+  const values: Partial<Env> = { CACHE_TTL_MS: TTL_MS };
   const config = { get: (key: keyof Env) => values[key] } as unknown as ConfigService<Env, true>;
   return new QueryCacheService(config);
 };
@@ -167,8 +165,8 @@ describe('QueryCacheService', () => {
           finish = resolve;
         }),
     );
-    // Half a TTL of loading: measured from the start, the result would expire half a TTL early.
-    await vi.advanceTimersByTimeAsync(Math.min(TTL_MS / 2, PENDING_LIMIT_MS - 1));
+    // Two TTLs of loading: measured from the start, the result would already be expired.
+    await vi.advanceTimersByTimeAsync(TTL_MS * 2);
     // Still loading: a second call shares the pending load instead of starting one.
     const load = vi.fn().mockResolvedValue('second');
     const again = cache.wrap(['slow'], load);
@@ -181,28 +179,6 @@ describe('QueryCacheService', () => {
     expect(await cache.wrap(['slow'], load)).toBe('first');
     vi.advanceTimersByTime(1);
     expect(await cache.wrap(['slow'], load)).toBe('second');
-  });
-
-  it(`${PENDING_LIMIT_MS}ms(타임아웃 + 여유) 넘게 끝나지 않는 불러오기는 버리고 새로 불러온다`, async () => {
-    vi.useFakeTimers();
-    const cache = makeCache();
-    const stuck = cache.wrap(
-      ['stuck'],
-      () =>
-        new Promise<string>(() => {
-          // Never settles: a load stuck on a dead connection.
-        }),
-    );
-    const load = vi.fn().mockResolvedValue('fresh');
-
-    await vi.advanceTimersByTimeAsync(PENDING_LIMIT_MS - 1);
-    const waiting = cache.wrap(['stuck'], load);
-    expect(load).not.toHaveBeenCalled();
-    expect(waiting).toBe(stuck);
-
-    await vi.advanceTimersByTimeAsync(1);
-    expect(await cache.wrap(['stuck'], load)).toBe('fresh');
-    expect(load).toHaveBeenCalledOnce();
   });
 
   it('가득 차면 만료된 것을 먼저 버리고, 그다음 가장 오래 안 쓴 것을 버린다', async () => {
@@ -247,5 +223,18 @@ describe('QueryCacheService', () => {
     expect(await cache.wrap(['k0'], load)).toBe('again');
     expect(await cache.wrap([`k${MAX_CACHE_ENTRIES}`], load)).toBe(`k${MAX_CACHE_ENTRIES}`);
     expect(load).toHaveBeenCalledOnce();
+  });
+
+  it('set은 값을 얼려 바로 기억하고, 같은 키의 이전 값을 바꾼다', async () => {
+    const cache = makeCache();
+    await cache.wrap(['list'], () => Promise.resolve(['old']));
+    const value = ['new'];
+
+    cache.set(['list'], value);
+
+    expect(Object.isFrozen(value)).toBe(true);
+    const load = vi.fn().mockResolvedValue(['loaded']);
+    expect(await cache.wrap(['list'], load)).toEqual(['new']);
+    expect(load).not.toHaveBeenCalled();
   });
 });

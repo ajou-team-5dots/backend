@@ -3,12 +3,17 @@ import path from 'node:path';
 
 import { DEFAULT_PRECOMPUTED_DIR, validateEnv } from './env.schema.js';
 
+// NODE_ENV set explicitly, as in .env.example: only then may API_KEYS stay empty.
 const VALID = {
+  NODE_ENV: 'development',
   CLICKHOUSE_URL: 'http://db.example.test:8123',
   CLICKHOUSE_USER: 'reader',
   CLICKHOUSE_PASSWORD: 'p4ss-w0rd-never-printed',
   CLICKHOUSE_DB: 'default',
 };
+
+/** VALID with NODE_ENV left unset, as on a server whose .env forgot it. */
+const WITHOUT_NODE_ENV = { ...VALID, NODE_ENV: undefined };
 
 const KEY_A = 'a'.repeat(32);
 const KEY_B = 'b'.repeat(40);
@@ -27,15 +32,24 @@ const errorOf = (raw: Record<string, unknown>): string => {
 
 describe('validateEnv', () => {
   it('기본값을 채운다', () => {
-    expect(validateEnv(VALID)).toEqual({
-      ...VALID,
+    expect(validateEnv({ ...WITHOUT_NODE_ENV, API_KEYS: KEY_A })).toEqual({
+      ...WITHOUT_NODE_ENV,
       NODE_ENV: 'development',
       PORT: 3000,
       CLICKHOUSE_REQUEST_TIMEOUT_MS: 10_000,
       PRECOMPUTED_DIR: DEFAULT_PRECOMPUTED_DIR,
       CACHE_TTL_MS: 3_600_000,
-      API_KEYS: [],
+      API_KEYS: [KEY_A],
     });
+  });
+
+  it('NODE_ENV를 비워 둔 채 API_KEYS도 비우면 시작하지 않는다 (서버에서 API가 열리지 않게)', () => {
+    expect(errorOf(WITHOUT_NODE_ENV)).toContain(
+      'API_KEYS(없음: 비워 두려면 NODE_ENV=development를 명시)',
+    );
+    expect(errorOf({ ...WITHOUT_NODE_ENV, NODE_ENV: ' ' })).toContain('API_KEYS(없음');
+    expect(validateEnv({ ...WITHOUT_NODE_ENV, NODE_ENV: 'test' }).API_KEYS).toEqual([]);
+    expect(validateEnv(VALID).API_KEYS).toEqual([]);
   });
 
   it('미리 계산 폴더 기본값은 실행 위치가 아니라 프로젝트 루트 기준이다', () => {
@@ -46,21 +60,21 @@ describe('validateEnv', () => {
   });
 
   it('.env.example을 그대로 복사하고 ClickHouse 필수 키만 채워도 시작한다', async () => {
-    // Every key in the template, blank, as a teammate gets it after `cp .env.example .env`.
+    // Every key in the template as written, as a teammate gets it after `cp .env.example .env`.
     const template = await readFile(
       path.resolve(import.meta.dirname, '../../.env.example'),
       'utf8',
     );
-    const blank = Object.fromEntries(
+    const copied = Object.fromEntries(
       template
         .split('\n')
-        .map((line) => /^([A-Z0-9_]+)=/.exec(line)?.[1])
-        .filter((key): key is string => key !== undefined)
-        .map((key) => [key, '']),
+        .map((line) => /^([A-Z0-9_]+)=(.*)$/.exec(line))
+        .filter((match): match is RegExpExecArray => match !== null)
+        .map(([, key, value]) => [key, value]),
     );
-    expect(Object.keys(blank)).toEqual(expect.arrayContaining(['NODE_ENV', 'PORT']));
+    expect(Object.keys(copied)).toEqual(expect.arrayContaining(['NODE_ENV', 'PORT', 'API_KEYS']));
 
-    const env = validateEnv({ ...blank, ...VALID });
+    const env = validateEnv({ ...copied, ...VALID, NODE_ENV: copied.NODE_ENV });
     expect(env.NODE_ENV).toBe('development');
     expect(env.PORT).toBe(3000);
     expect(env.CLICKHOUSE_REQUEST_TIMEOUT_MS).toBe(10_000);

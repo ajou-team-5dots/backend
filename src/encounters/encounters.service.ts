@@ -31,6 +31,9 @@ export class EncountersService {
   /** When the monster list was last (re)loaded; drives KNOWN_MONSTERS_REFRESH_MS. */
   private knownLoadedAt = Number.NEGATIVE_INFINITY;
 
+  /** The list re-read in flight, shared by every miss that arrives meanwhile. */
+  private refreshing: Promise<readonly string[]> | undefined;
+
   constructor(
     private readonly clickHouse: ClickHouseService,
     private readonly cache: QueryCacheService,
@@ -62,27 +65,45 @@ export class EncountersService {
     });
   }
 
-  /** Looks the id up in the cached list; on a miss, re-reads the list if the minute is up. */
+  /**
+   * Looks the id up in the cached list. On a miss, re-reads the list if the minute is up, and only
+   * a successful read replaces it: a failed refresh keeps the old list for every other request
+   * (this one gets the 503). Misses during a refresh wait for it instead of starting their own.
+   */
   private async isKnownMonster(monster: string): Promise<boolean> {
     if ((await this.knownMonsterIds()).includes(monster)) {
       return true;
     }
-    if (Date.now() - this.knownLoadedAt < KNOWN_MONSTERS_REFRESH_MS) {
-      return false;
+    if (this.refreshing === undefined) {
+      if (Date.now() - this.knownLoadedAt < KNOWN_MONSTERS_REFRESH_MS) {
+        return false;
+      }
+      // Recorded before the read starts, synchronously: concurrent misses see it at once.
+      this.knownLoadedAt = Date.now();
+      this.refreshing = this.readMonsterIds()
+        .then((ids) => {
+          this.cache.set(KNOWN_MONSTERS_KEY, ids);
+          return ids;
+        })
+        .finally(() => {
+          this.refreshing = undefined;
+        });
     }
-    this.cache.delete(KNOWN_MONSTERS_KEY);
-    return (await this.knownMonsterIds()).includes(monster);
+    return (await this.refreshing).includes(monster);
   }
 
   /** Every monster id in the encounters table (a few dozen), cached like any screen query. */
   private knownMonsterIds(): Promise<readonly string[]> {
-    return this.cache.wrap(KNOWN_MONSTERS_KEY, async () => {
-      // Set when the load starts, so concurrent misses do not all trigger their own reload.
+    return this.cache.wrap(KNOWN_MONSTERS_KEY, () => {
       this.knownLoadedAt = Date.now();
-      const rows = await this.clickHouse.query<{ monster: string }>(
-        'SELECT DISTINCT monster_id AS monster FROM encounters',
-      );
-      return rows.map((row) => row.monster);
+      return this.readMonsterIds();
     });
+  }
+
+  private async readMonsterIds(): Promise<readonly string[]> {
+    const rows = await this.clickHouse.query<{ monster: string }>(
+      'SELECT DISTINCT monster_id AS monster FROM encounters',
+    );
+    return rows.map((row) => row.monster);
   }
 }

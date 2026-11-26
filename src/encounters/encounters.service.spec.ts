@@ -130,5 +130,46 @@ describe('EncountersService', () => {
       });
       expect(listCalls()).toBe(2);
     });
+
+    it('다시 읽기가 실패하면 그 요청만 실패하고, 기존 목록으로 계속 센다', async () => {
+      vi.useFakeTimers();
+      const { service, query, listCalls } = setup();
+      const base = { heavy: 'include', period: 'current' } as const;
+      await service.countByMonster({ ...base, monster: 'small_zombie' });
+      await vi.advanceTimersByTimeAsync(KNOWN_MONSTERS_REFRESH_MS);
+      const original = query.getMockImplementation();
+      query.mockImplementation((sql: string) =>
+        sql.includes('DISTINCT') ? Promise.reject(new Error('db down')) : original!(sql),
+      );
+
+      await expect(service.countByMonster({ ...base, monster: 'nobody' })).rejects.toThrow(
+        'db down',
+      );
+
+      expect(listCalls()).toBe(2);
+      expect(await service.countByMonster({ ...base, monster: 'small_zombie' })).toEqual({
+        monster: 'small_zombie',
+        encounters: 4429,
+        known: true,
+      });
+      expect(await service.countByMonster({ ...base, monster: 'blink_imp' })).toMatchObject({
+        known: true,
+      });
+    });
+
+    it('간격이 지난 뒤 모르는 ID가 한꺼번에 와도 목록은 한 번만 읽는다', async () => {
+      vi.useFakeTimers();
+      const { service, listCalls } = setup();
+      const base = { heavy: 'include', period: 'current' } as const;
+      await service.countByMonster({ ...base, monster: 'small_zombie' });
+      await vi.advanceTimersByTimeAsync(KNOWN_MONSTERS_REFRESH_MS);
+
+      const results = await Promise.all(
+        ['a', 'b', 'c', 'd', 'e'].map((monster) => service.countByMonster({ ...base, monster })),
+      );
+
+      expect(results.every((result) => !result.known)).toBe(true);
+      expect(listCalls()).toBe(2);
+    });
   });
 });

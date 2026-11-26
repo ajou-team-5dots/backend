@@ -89,10 +89,6 @@ export const envSchema = z.object({
 
 export type Env = z.infer<typeof envSchema>;
 
-/**
- * Validates env vars at startup (ConfigModule `validate`). The error names the bad keys only:
- * zod messages can quote the received value, and that value may be a password.
- */
 type Problem = [key: string, reason: string];
 
 const isBlank = (value: unknown): boolean =>
@@ -100,6 +96,9 @@ const isBlank = (value: unknown): boolean =>
 
 /**
  * Rules across keys, checked on each key's own parse so they run even when other keys are broken.
+ * - API_KEYS may be empty (key check off) only when NODE_ENV is set explicitly to development or
+ *   test. A blank NODE_ENV defaults to development, but an unset NODE_ENV on a server must not
+ *   leave the API open
  * - production needs API_KEYS and REVALIDATE_TOKEN, each 64 lowercase hex characters
  * - REVALIDATE_TOKEN must differ from every API key (in any environment): otherwise whoever holds
  *   an API key could also clear the cache
@@ -111,10 +110,20 @@ const secretProblems = (raw: Record<string, unknown>): Problem[] => {
   const token = shape.REVALIDATE_TOKEN.safeParse(raw.REVALIDATE_TOKEN);
   const problems: Problem[] = [];
 
+  const explicitNonProduction =
+    !isBlank(raw.NODE_ENV) && nodeEnv.success && nodeEnv.data !== 'production';
+  if (!explicitNonProduction && keys.success && keys.data.length === 0) {
+    problems.push([
+      'API_KEYS',
+      isBlank(raw.NODE_ENV) ? '없음: 비워 두려면 NODE_ENV=development를 명시' : '없음',
+    ]);
+  }
   if (nodeEnv.success && nodeEnv.data === 'production') {
-    if (keys.success && keys.data.length === 0) {
-      problems.push(['API_KEYS', '없음']);
-    } else if (keys.success && !keys.data.every((key) => PRODUCTION_SECRET.test(key))) {
+    if (
+      keys.success &&
+      keys.data.length > 0 &&
+      !keys.data.every((key) => PRODUCTION_SECRET.test(key))
+    ) {
       problems.push(['API_KEYS', '형식 오류: openssl rand -hex 32 값만']);
     }
     if (token.success && token.data === undefined) {

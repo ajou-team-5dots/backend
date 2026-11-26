@@ -10,26 +10,22 @@ import type { Env } from '../config/env.schema.js';
  */
 export const MAX_CACHE_ENTRIES = 5_000;
 
-/**
- * A load still running CLICKHOUSE_REQUEST_TIMEOUT_MS plus this long is treated as stuck: the next
- * call starts a fresh one instead of waiting on it forever. The margin covers a query that ends
- * right at the timeout and the work after it (parsing, freezing).
- */
-export const PENDING_GRACE_MS = 5_000;
-
 /** One key element. Objects are not allowed: their serialization depends on property order. */
 export type CacheKeyPart = string | number | boolean | bigint | null | undefined;
 
 interface Entry {
-  startedAt: number;
   /** Set once the load succeeded; until then the entry is pending. */
   expiresAt?: number;
   value: Promise<unknown>;
 }
 
-/** A finished entry lives for the TTL; a pending one until it has run `pendingLimitMs`. */
-const isFresh = (entry: Entry, now: number, pendingLimitMs: number): boolean =>
-  entry.expiresAt === undefined ? now - entry.startedAt < pendingLimitMs : entry.expiresAt > now;
+/**
+ * A finished entry lives for the TTL. A pending one is always fresh: every load is a ClickHouse
+ * query or a file read that settles on its own (the client's request_timeout ends a hung query),
+ * and a failure removes the entry.
+ */
+const isFresh = (entry: Entry, now: number): boolean =>
+  entry.expiresAt === undefined || entry.expiresAt > now;
 
 /**
  * Turns a key into a Map id. Each part carries its type, so values that JSON.stringify would merge
@@ -63,11 +59,11 @@ const keyId = (key: readonly CacheKeyPart[]): string =>
 /**
  * Replaces front-demo's `'use cache'` + `cacheLife('hours')`: remembers each result in process
  * memory for CACHE_TTL_MS after it finished loading. Calls that arrive while the same key is still
- * loading share that one promise (until the load looks stuck, see PENDING_GRACE_MS), so
- * `Promise.all` over functions that need the same aggregate sends one query, not several. Failures are not remembered. Results are deep-frozen: every
+ * loading share that one promise, so `Promise.all` over functions that need the same aggregate
+ * sends one query, not several. Failures are not remembered. Results are deep-frozen: every
  * request gets the same object, so copy before changing it. When full, expired entries go first,
- * then the least recently used. Everything is dropped at once by `clear()` after a load or batch
- * run (front-demo also cleared both of its tags together).
+ * then the least recently used. Everything is dropped at once by `clear()` after a ClickHouse
+ * load (front-demo also cleared both of its tags together).
  */
 @Injectable()
 export class QueryCacheService {
@@ -76,12 +72,8 @@ export class QueryCacheService {
 
   private readonly ttlMs: number;
 
-  private readonly pendingLimitMs: number;
-
   constructor(config: ConfigService<Env, true>) {
     this.ttlMs = config.get('CACHE_TTL_MS', { infer: true });
-    this.pendingLimitMs =
-      config.get('CLICKHOUSE_REQUEST_TIMEOUT_MS', { infer: true }) + PENDING_GRACE_MS;
   }
 
   /**
@@ -99,7 +91,7 @@ export class QueryCacheService {
 
     const now = Date.now();
     const hit = this.entries.get(id);
-    if (hit && isFresh(hit, now, this.pendingLimitMs)) {
+    if (hit && isFresh(hit, now)) {
       this.entries.delete(id);
       this.entries.set(id, hit);
       // Safe: the key starts with the caller's name, and that caller always stores a T.
@@ -107,7 +99,7 @@ export class QueryCacheService {
     }
 
     this.entries.delete(id);
-    const entry: Entry = { startedAt: now, value: Promise.resolve() };
+    const entry: Entry = { value: Promise.resolve() };
     const value = Promise.resolve()
       .then(load)
       .then((result) => {
@@ -129,9 +121,16 @@ export class QueryCacheService {
     return value;
   }
 
-  /** Forgets one key (finished or still loading), so the next wrap() loads it again. */
-  delete(key: readonly CacheKeyPart[]): boolean {
-    return this.entries.delete(keyId(key));
+  /**
+   * Stores a value loaded elsewhere under `key`, replacing what was there (as if `wrap` had just
+   * loaded it). For refreshes that must keep the old value until the new one has arrived.
+   */
+  set(key: readonly CacheKeyPart[], value: unknown): void {
+    const id = keyId(key);
+    const frozen = deepFreeze(value);
+    this.entries.delete(id);
+    this.entries.set(id, { expiresAt: Date.now() + this.ttlMs, value: Promise.resolve(frozen) });
+    this.evictOverflow();
   }
 
   /** Drops every remembered result. Returns how many there were. */
@@ -151,7 +150,7 @@ export class QueryCacheService {
     }
     const now = Date.now();
     this.entries.forEach((entry, id) => {
-      if (!isFresh(entry, now, this.pendingLimitMs)) {
+      if (!isFresh(entry, now)) {
         this.entries.delete(id);
       }
     });
