@@ -13,10 +13,14 @@ services:
     env_file:
       - path: /opt/backend/.env
         required: false
+        # Values are taken literally: a password containing `$` is not expanded as a variable.
+        format: raw
     # Fixed here, not in .env: `environment` wins over env_file, so a stray value there is ignored.
+    # PRECOMPUTED_DIR points at the batch JSON baked into the image (see Dockerfile).
     environment:
       NODE_ENV: production
       PORT: '3000'
+      PRECOMPUTED_DIR: /app/data/precomputed
     restart: unless-stopped
     # Internal test only: the security group admits just the team's IPs on 3000.
     # Once a reverse proxy (Caddy) sits in front, bind to loopback: "127.0.0.1:3000:3000".

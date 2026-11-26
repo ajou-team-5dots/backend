@@ -35,11 +35,12 @@ nano /opt/backend/.env   # 키를 적는다
 
 - 첫 배포 전이라 소스가 아직 없다. 키 이름은 repo의 `.env.example`을 보고 적는다
 - 키 목록과 설명은 `.env.example`과 [ENV.md](./ENV.md#1-키-목록) 1절을 참고한다
-- **`.env`에 `NODE_ENV`·`PORT`를 넣지 않는다.** `compose.yaml`이 `production`·`3000`으로 고정하고, `.env`에 있어도 무시된다. `CLICKHOUSE_URL`은 DB의 **사설 IP** 주소를 적는다
-- **`API_KEYS`는 production에서 필수다.** 비우면 컨테이너가 시작하지 않고 로그에 `환경 변수 설정 오류: API_KEYS(없음)`가 나온다
+- **`.env`에 `NODE_ENV`·`PORT`·`PRECOMPUTED_DIR`을 넣지 않는다.** `compose.yaml`이 `production`·`3000`·`/app/data/precomputed`로 고정하고, `.env`에 있어도 무시된다. `CLICKHOUSE_URL`은 DB의 **사설 IP** 주소를 적는다
+- **`API_KEYS`는 production에서 필수다.** 비우면 컨테이너가 **재시작을 반복하고**(`docker compose ps`의 STATUS가 `Restarting`), 로그에 `환경 변수 설정 오류: API_KEYS(없음)`가 나온다
 - 키 만들기는 `openssl rand -hex 32`를 쓴다. production에서는 이 명령이 만드는 **64자 소문자 hex만** 통과한다(손으로 친 값·저장소의 테스트 키는 시작 시 거부). 만든 키는 팀 비밀번호 관리자에 두고, 같은 값을 Vercel `API_KEYS` 자리([ENV.md](./ENV.md#5-vercel-front-demo) 5절)에도 넣는다. 교체 순서는 [ENV.md](./ENV.md#1-키-목록) 1절을 참고한다
-- **`REVALIDATE_TOKEN`도 production에서 필수다.** 비우면 컨테이너가 시작하지 않는다(`환경 변수 설정 오류: REVALIDATE_TOKEN(없음)`). `openssl rand -hex 32`로 만든 같은 64자 소문자 hex만 통과하며, **API 키와 같으면 시작하지 않는다.** 팀 비밀번호 관리자에 둔다(Vercel에는 넣지 않는다)
-- 이미 배포한 VM은 다음 배포 전에 `/opt/backend/.env`에 이 키를 더한다
+- **`REVALIDATE_TOKEN`도 production에서 필수다.** 비우면 컨테이너가 **재시작을 반복하고**(`docker compose ps`의 STATUS가 `Restarting`), 로그에 `환경 변수 설정 오류: REVALIDATE_TOKEN(없음)`가 나온다. `openssl rand -hex 32`로 만든 같은 64자 소문자 hex만 통과하며, **API 키와 같아도 재시작을 반복한다.** 팀 비밀번호 관리자에 둔다(Vercel에는 넣지 않는다)
+- 이미 배포한 VM은 다음 배포 전에 `/opt/backend/.env`에 `REVALIDATE_TOKEN`을 더하고, `PRECOMPUTED_DIR`·`NODE_ENV`·`PORT` 줄은 지운다
+- `.env` 값은 적힌 그대로 쓰인다(`$`가 들어 있어도 변수로 풀리지 않는다). 따옴표로 감싸지 않는다
 - 값은 **팀 비밀번호 관리자**에서 받는다. 메신저·Notion·GitHub(Secrets 포함)에 두지 않는다
 - 파일 주인은 `docker compose`를 실행하는 사용자다. `docker compose`는 `env_file`을 실행한 사용자 권한으로 읽으므로, root 소유 600이면 `open /opt/backend/.env: permission denied`로 실패한다. 위 `chown`으로 소유자만 바꾸고 권한은 600을 유지한다
 - Ghostty 같은 터미널에서 접속해 `nano`가 `Error opening terminal`로 열리지 않으면 `TERM=xterm-256color nano /opt/backend/.env`로 연다(root 소유 파일이면 `sudo TERM=xterm-256color nano /opt/backend/.env`)
@@ -58,12 +59,18 @@ VM에서 이미지를 빌드하고 컨테이너를 띄운다.
 
 ```bash
 cd /opt/backend
+rm -rf app.new && mkdir app.new && tar -xzf backend.tar.gz -C app.new
 docker image tag 5dots-backend:latest 5dots-backend:prev 2>/dev/null || true   # 되돌리기용 이미지
-rm -rf app.prev && { [ -d app ] && mv app app.prev || true; }                  # 되돌리기용 소스
-mkdir app && tar -xzf backend.tar.gz -C app
-cd app && docker compose up -d --build
+# 아래 네 줄은 &&로 이어져 있어, 빌드가 실패하면 교체와 재시작을 하지 않는다(지금 도는 컨테이너와 app은 그대로)
+(cd app.new && docker compose build) \
+  && { rm -rf app.prev && { [ -d app ] && mv app app.prev || true; }; } \
+  && mv app.new app \
+  && cd app && docker compose up -d
+docker image prune -f                              # 태그 없는 옛 이미지 정리 (prev는 남는다)
+docker builder prune -f --filter until=168h        # 7일 넘은 빌드 캐시 정리
 ```
 
+- 새 소스는 `app.new`에 풀고 **빌드가 성공한 뒤에만** `app`과 바꾼다. 빌드가 실패하면 서비스와 `app`은 그대로다
 - 소스는 `/opt/backend/app`, 비밀 값은 `/opt/backend/.env`다. 둘을 나눠 두어 배포가 `.env`를 지우지 않는다
 - 직전 배포의 소스는 `/opt/backend/app.prev`, 이미지는 `5dots-backend:prev`로 하나씩 남는다
 - compose 프로젝트 이름은 `5dots-backend`로 고정돼 있어 `app`과 `app.prev` 어느 폴더에서 실행해도 같은 컨테이너를 다룬다
@@ -71,6 +78,7 @@ cd app && docker compose up -d --build
 - 컨테이너는 읽기 전용 파일 시스템(`/tmp`만 쓰기 가능), 모든 Linux capability 제거, `no-new-privileges`로 돈다
 - 컨테이너는 `restart: unless-stopped`라 VM이 재부팅돼도 다시 뜬다
 - 로그는 `json-file`로 10MB씩 3개까지만 남는다
+- 마지막 두 정리 명령은 `t4g.small` 디스크가 빌드마다 차지 않도록 옛 이미지와 빌드 캐시를 비운다
 
 ## 4. 확인
 
@@ -90,6 +98,7 @@ docker compose logs --tail 100 backend
 unset API_KEY
 ```
 
+- `docker compose ps`의 STATUS가 `Restarting`이면 `docker compose logs --tail 50 backend`로 원인(`환경 변수 설정 오류: ...` 등)을 본다
 - `curl -H "x-api-key: $API_KEY"`처럼 쓰면 키가 `ps`에 잠깐 보이므로 `printf ... | curl -H @-`로 넘긴다
 - 팀원 PC에서는 `http://<VM 주소>:3000/health`(키 없이)로 확인한다. 다른 경로를 브라우저 주소창으로 열면 401이 정상이다
 - 401이면 볼 것: 헤더 이름(`x-api-key`), `.env`의 `API_KEYS`와 같은 값인지, 앞뒤 공백
@@ -110,14 +119,16 @@ unset REVALIDATE_TOKEN
 
 ## 6. 되돌리기
 
-직전 이미지와 그 이미지를 만든 소스(같은 compose 설정)로 돌아간다.
+직전 이미지와 그 소스로 돌아가고, `app`이 다시 지금 도는 소스를 가리킨다.
 
 ```bash
 docker image tag 5dots-backend:prev 5dots-backend:latest
-cd /opt/backend/app.prev && docker compose up -d --no-build
+cd /opt/backend
+rm -rf app.bad && mv app app.bad && mv app.prev app    # 문제 있는 소스는 app.bad로 비켜 둔다
+cd app && docker compose up -d --no-build
 ```
 
-- 되돌린 뒤 다음 배포는 평소대로 3절. 두 단계 이상 되돌리려면 그 커밋으로 3절을 다시 한다
+- 원인을 확인한 뒤 `app.bad`는 지운다. 두 단계 이상 되돌리려면 그 커밋으로 3절을 다시 한다
 
 ## 7. 나중에 바꿀 것
 

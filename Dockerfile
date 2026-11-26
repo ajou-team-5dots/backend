@@ -13,7 +13,8 @@ ENV HUSKY=0 \
     CI=true
 COPY package.json pnpm-lock.yaml ./
 # Node 25+ no longer ships corepack, so install the exact pnpm pinned in packageManager.
-RUN npm install -g "$(node -p "require('./package.json').packageManager")" \
+# Corepack may append `+sha512.<hash>` to that field; npm does not understand it, so drop it.
+RUN npm install -g "$(node -p "require('./package.json').packageManager.split('+')[0]")" \
  && npm cache clean --force
 
 FROM base AS build
