@@ -10,14 +10,25 @@ import type { Env } from '../config/env.schema.js';
  */
 export const MAX_CACHE_ENTRIES = 5_000;
 
+/**
+ * A load still running after this long is treated as stuck: the next call starts a fresh one
+ * instead of waiting on it forever. Well above CLICKHOUSE_REQUEST_TIMEOUT_MS (10 s by default).
+ */
+export const MAX_PENDING_MS = 30_000;
+
 /** One key element. Objects are not allowed: their serialization depends on property order. */
 export type CacheKeyPart = string | number | boolean | bigint | null | undefined;
 
 interface Entry {
-  /** Infinity while loading: a pending load is never treated as expired. */
-  expiresAt: number;
+  startedAt: number;
+  /** Set once the load succeeded; until then the entry is pending. */
+  expiresAt?: number;
   value: Promise<unknown>;
 }
+
+/** A finished entry lives for the TTL; a pending one until it has run MAX_PENDING_MS. */
+const isFresh = (entry: Entry, now: number): boolean =>
+  entry.expiresAt === undefined ? now - entry.startedAt < MAX_PENDING_MS : entry.expiresAt > now;
 
 /**
  * Turns a key into a Map id. Each part carries its type, so values that JSON.stringify would merge
@@ -51,7 +62,7 @@ const keyId = (key: readonly CacheKeyPart[]): string =>
 /**
  * Replaces front-demo's `'use cache'` + `cacheLife('hours')`: remembers each result in process
  * memory for CACHE_TTL_MS after it finished loading. Calls that arrive while the same key is still
- * loading share that one promise, so `Promise.all` over functions that need the same aggregate
+ * loading share that one promise (for up to MAX_PENDING_MS), so `Promise.all` over functions that need the same aggregate
  * sends one query, not several. Failures are not remembered. Results are deep-frozen: every
  * request gets the same object, so copy before changing it. When full, expired entries go first,
  * then the least recently used. Everything is dropped at once by `clear()` after a load or batch
@@ -81,8 +92,9 @@ export class QueryCacheService {
       return Promise.reject(error instanceof Error ? error : new Error(String(error)));
     }
 
+    const now = Date.now();
     const hit = this.entries.get(id);
-    if (hit && hit.expiresAt > Date.now()) {
+    if (hit && isFresh(hit, now)) {
       this.entries.delete(id);
       this.entries.set(id, hit);
       // Safe: the key starts with the caller's name, and that caller always stores a T.
@@ -90,22 +102,22 @@ export class QueryCacheService {
     }
 
     this.entries.delete(id);
-    const entry: Entry = { expiresAt: Number.POSITIVE_INFINITY, value: Promise.resolve() };
+    const entry: Entry = { startedAt: now, value: Promise.resolve() };
     const value = Promise.resolve()
       .then(load)
-      .then(
-        (result) => {
-          entry.expiresAt = Date.now() + this.ttlMs;
-          return deepFreeze(result);
-        },
-        (error: unknown) => {
-          // Only drop our own entry: clear() and a later reload may already have replaced it.
-          if (this.entries.get(id) === entry) {
-            this.entries.delete(id);
-          }
-          throw error;
-        },
-      );
+      .then((result) => {
+        // Freeze first: if freezing throws, the entry must not count as loaded.
+        const frozen = deepFreeze(result);
+        entry.expiresAt = Date.now() + this.ttlMs;
+        return frozen;
+      })
+      .catch((error: unknown) => {
+        // Only drop our own entry: clear() and a later reload may already have replaced it.
+        if (this.entries.get(id) === entry) {
+          this.entries.delete(id);
+        }
+        throw error;
+      });
     entry.value = value;
     this.entries.set(id, entry);
     this.evictOverflow();
@@ -129,7 +141,7 @@ export class QueryCacheService {
     }
     const now = Date.now();
     this.entries.forEach((entry, id) => {
-      if (entry.expiresAt <= now) {
+      if (!isFresh(entry, now)) {
         this.entries.delete(id);
       }
     });

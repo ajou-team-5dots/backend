@@ -1,4 +1,4 @@
-import { Injectable, NotFoundException } from '@nestjs/common';
+import { Injectable } from '@nestjs/common';
 
 import { QueryCacheService } from '../cache/query-cache.service.js';
 import { ClickHouseService } from '../clickhouse/clickhouse.service.js';
@@ -23,9 +23,9 @@ export class EncountersService {
   ) {}
 
   /**
-   * Cached per (monster, heavy, period). Only monsters that exist in the encounters table are
-   * looked up or cached: otherwise any well-formed id would cost a query and a cache slot, and a
-   * few thousand made-up ids could push every real result out of the cache.
+   * Cached per (monster, heavy, period). An id missing from the encounters table has 0 encounters
+   * by definition, so it gets a constant 0 without a query or a cache slot: otherwise a few
+   * thousand made-up ids could cost a query each and push every real result out of the cache.
    */
   async countByMonster({
     monster,
@@ -34,7 +34,7 @@ export class EncountersService {
   }: EncounterCountQueryDto): Promise<EncounterCount> {
     const known = await this.knownMonsterIds();
     if (!known.includes(monster)) {
-      throw new NotFoundException('알 수 없는 몬스터입니다.');
+      return { monster, encounters: 0 };
     }
     return this.cache.wrap(['encounter-count', monster, heavy, period], async () => {
       // count() is UInt64, which JSON returns as a string; toUInt32 keeps it a number.

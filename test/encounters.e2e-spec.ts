@@ -4,6 +4,7 @@ import request from 'supertest';
 
 import { AppModule } from '../src/app.module.js';
 import { configureApp } from '../src/app.setup.js';
+import { QueryCacheService } from '../src/cache/query-cache.service.js';
 import { API_KEY_HEADER } from '../src/security/api-key.guard.js';
 import { ClickHouseService } from '../src/clickhouse/clickhouse.service.js';
 
@@ -29,6 +30,8 @@ describe('GET /encounters/count (e2e)', () => {
   });
 
   beforeEach(() => {
+    // Each test starts cold: results cached by an earlier test would hide its DB calls.
+    app.get(QueryCacheService).clear();
     query.mockReset();
     query.mockImplementation((sql: string) =>
       Promise.resolve(
@@ -53,11 +56,24 @@ describe('GET /encounters/count (e2e)', () => {
     });
   });
 
-  it('모르는 몬스터는 404', async () => {
-    await request(app.getHttpServer())
+  it('모르는 몬스터는 200, 0이고 DB도 캐시도 거치지 않는다', async () => {
+    const server = app.getHttpServer();
+    // Load the known-monster list first, then watch the unknown id alone.
+    await request(server)
+      .get('/encounters/count?monster=small_zombie')
+      .set(API_KEY_HEADER, TEST_API_KEY);
+    query.mockClear();
+    const cache = app.get(QueryCacheService);
+    const sizeBefore = cache.size;
+
+    await request(server)
       .get('/encounters/count?monster=nobody')
       .set(API_KEY_HEADER, TEST_API_KEY)
-      .expect(404);
+      .expect(200)
+      .expect({ monster: 'nobody', encounters: 0 });
+
+    expect(query).not.toHaveBeenCalled();
+    expect(cache.size).toBe(sizeBefore);
   });
 
   it.each([

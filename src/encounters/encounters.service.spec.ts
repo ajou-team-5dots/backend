@@ -1,4 +1,3 @@
-import { NotFoundException } from '@nestjs/common';
 import type { ConfigService } from '@nestjs/config';
 
 import { QueryCacheService } from '../cache/query-cache.service.js';
@@ -15,16 +14,14 @@ const setup = (count: { encounters: number }[] = [{ encounters: 4429 }]) => {
     Promise.resolve(sql.includes('DISTINCT monster_id') ? KNOWN : count),
   );
   const config = { get: () => 60_000 } as unknown as ConfigService<Env, true>;
-  const service = new EncountersService(
-    { query } as unknown as ClickHouseService,
-    new QueryCacheService(config),
-  );
+  const cache = new QueryCacheService(config);
+  const service = new EncountersService({ query } as unknown as ClickHouseService, cache);
   const countCalls = () =>
     query.mock.calls.filter(([sql]) => sql.includes('count()')) as unknown as [
       string,
       Record<string, unknown>,
     ][];
-  return { service, query, countCalls };
+  return { service, query, cache, countCalls };
 };
 
 describe('EncountersService', () => {
@@ -69,12 +66,19 @@ describe('EncountersService', () => {
     expect(query.mock.calls.filter(([sql]) => sql.includes('DISTINCT'))).toHaveLength(1);
   });
 
-  it('모르는 몬스터는 404이고, 교전 수를 조회하지도 캐시하지도 않는다', async () => {
-    const { service, countCalls } = setup();
+  it('모르는 몬스터는 0이고, 교전 수를 조회하지도 캐시하지도 않는다', async () => {
+    const { service, cache, countCalls } = setup();
+    await service.countByMonster({ monster: 'small_zombie', heavy: 'include', period: 'current' });
+    const sizeBefore = cache.size;
 
-    await expect(
-      service.countByMonster({ monster: 'nobody', heavy: 'include', period: 'current' }),
-    ).rejects.toBeInstanceOf(NotFoundException);
-    expect(countCalls()).toHaveLength(0);
+    const result = await service.countByMonster({
+      monster: 'nobody',
+      heavy: 'include',
+      period: 'current',
+    });
+
+    expect(result).toEqual({ monster: 'nobody', encounters: 0 });
+    expect(countCalls()).toHaveLength(1);
+    expect(cache.size).toBe(sizeBefore);
   });
 });
