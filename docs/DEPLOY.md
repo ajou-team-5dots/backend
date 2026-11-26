@@ -22,16 +22,18 @@ docker compose version
 sudo mkdir -p /opt/backend
 sudo chown "$USER":"$USER" /opt/backend
 touch /opt/backend/.env && chmod 600 /opt/backend/.env
+sudo chown ubuntu:ubuntu /opt/backend/.env   # compose를 실행하는 사용자 소유로 (600 유지)
 nano /opt/backend/.env   # 키를 적는다
 ```
 
 - 첫 배포 전이라 소스가 아직 없다. 키 이름은 repo의 `.env.example`을 보고 적는다
 - 키 목록과 설명은 `.env.example`과 [ENV.md](./ENV.md#1-키-목록) 1절을 참고한다
-- `NODE_ENV=production`으로 두고, `CLICKHOUSE_URL`은 DB의 **사설 IP** 주소를 적는다
+- `NODE_ENV`는 Dockerfile이 `production`으로 정하므로 `.env`에 넣지 않아도 된다. `CLICKHOUSE_URL`은 DB의 **사설 IP** 주소를 적는다
 - **`API_KEYS`는 production에서 필수다.** 비우면 컨테이너가 시작하지 않고 로그에 `환경 변수 설정 오류: API_KEYS(없음)`가 나온다
 - 키 만들기는 `openssl rand -hex 32`를 쓴다(32자 이상). 만든 키는 팀 비밀번호 관리자에 두고, 같은 값을 Vercel `API_KEYS` 자리([ENV.md](./ENV.md#5-vercel-front-demo) 5절)에도 넣는다. 교체 순서는 [ENV.md](./ENV.md#1-키-목록) 1절을 참고한다
 - 값은 **팀 비밀번호 관리자**에서 받는다. 메신저·Notion·GitHub(Secrets 포함)에 두지 않는다
-- 파일 주인은 `docker compose`를 실행하는 사용자다. `docker compose`는 `env_file`을 실행한 사용자 권한으로 읽으므로, root 소유 600이면 읽지 못한다
+- 파일 주인은 `docker compose`를 실행하는 사용자다. `docker compose`는 `env_file`을 실행한 사용자 권한으로 읽으므로, root 소유 600이면 `open /opt/backend/.env: permission denied`로 실패한다. 위 `chown`으로 소유자만 바꾸고 권한은 600을 유지한다
+- Ghostty 같은 터미널에서 접속해 `nano`가 `Error opening terminal`로 열리지 않으면 `TERM=xterm-256color nano /opt/backend/.env`로 연다(root 소유 파일이면 `sudo TERM=xterm-256color nano /opt/backend/.env`)
 - 배포는 이 파일을 건드리지 않는다. 값을 바꾸면 파일을 고치고 `docker compose up -d`로 다시 띄운다(`restart`는 `env_file` 변경을 반영하지 않는다)
 
 ## 3. 배포
