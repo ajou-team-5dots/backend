@@ -2,3 +2,5 @@ dist
 coverage
 node_modules
 pnpm-lock.yaml
+# Batch output is kept byte-for-byte so it can be compared with the analysis run.
+data/precomputed/

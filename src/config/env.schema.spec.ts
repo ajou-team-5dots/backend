@@ -23,7 +23,29 @@ describe('validateEnv', () => {
       NODE_ENV: 'development',
       PORT: 3000,
       CLICKHOUSE_REQUEST_TIMEOUT_MS: 10_000,
+      PRECOMPUTED_DIR: 'data/precomputed',
+      CACHE_TTL_MS: 3_600_000,
     });
+  });
+
+  it('.env.example처럼 빈 값(KEY=)이면 기본값을 쓴다', () => {
+    const env = validateEnv({ ...VALID, PRECOMPUTED_DIR: '', CACHE_TTL_MS: ' ' });
+    expect(env.PRECOMPUTED_DIR).toBe('data/precomputed');
+    expect(env.CACHE_TTL_MS).toBe(3_600_000);
+  });
+
+  it('미리 계산 폴더와 캐시 시간을 바꿀 수 있다', () => {
+    const env = validateEnv({
+      ...VALID,
+      PRECOMPUTED_DIR: '/opt/precomputed',
+      CACHE_TTL_MS: '60000',
+    });
+    expect(env.PRECOMPUTED_DIR).toBe('/opt/precomputed');
+    expect(env.CACHE_TTL_MS).toBe(60_000);
+  });
+
+  it('캐시 시간이 숫자가 아니면 거부한다', () => {
+    expect(errorOf({ ...VALID, CACHE_TTL_MS: 'soon' })).toContain('CACHE_TTL_MS(형식 오류)');
   });
 
   it('숫자 키는 문자열을 숫자로 바꾼다', () => {

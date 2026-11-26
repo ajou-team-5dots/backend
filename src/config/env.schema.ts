@@ -2,8 +2,16 @@ import { z } from 'zod';
 
 const DEFAULT_PORT = 3000;
 const DEFAULT_REQUEST_TIMEOUT_MS = 10_000;
+/** Relative to the working directory: the repo's data/precomputed in development. */
+const DEFAULT_PRECOMPUTED_DIR = 'data/precomputed';
+/** Same lifetime as front-demo's cacheLife('hours'). */
+const DEFAULT_CACHE_TTL_MS = 3_600_000;
 
 const nonEmpty = z.string().trim().min(1);
+
+/** `KEY=` copied from .env.example arrives as '', which means "use the default". */
+const blankAsUnset = (value: unknown): unknown =>
+  typeof value === 'string' && value.trim() === '' ? undefined : value;
 
 // Credentials go in CLICKHOUSE_USER/PASSWORD, never in the URL, so the URL can be logged
 // by host alone and is never a secret by itself.
@@ -24,6 +32,11 @@ export const envSchema = z.object({
     .int()
     .positive()
     .default(DEFAULT_REQUEST_TIMEOUT_MS),
+  PRECOMPUTED_DIR: z.preprocess(blankAsUnset, nonEmpty.default(DEFAULT_PRECOMPUTED_DIR)),
+  CACHE_TTL_MS: z.preprocess(
+    blankAsUnset,
+    z.coerce.number().int().positive().default(DEFAULT_CACHE_TTL_MS),
+  ),
 });
 
 export type Env = z.infer<typeof envSchema>;

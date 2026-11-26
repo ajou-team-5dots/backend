@@ -50,7 +50,10 @@ src/main.ts                 진입점. 앱 생성, 포트
 src/app.module.ts           ConfigModule과 기능 모듈을 모으기만 한다
 src/config/                 환경 변수 검증 (zod). 키가 없거나 틀리면 시작 시 멈춘다
 src/clickhouse/             공유 ClickHouse 클라이언트. ClickHouseService.query(sql, params)
-src/common/                 ZodValidationPipe 등 공용 부품
+src/cache/                  조회 결과 캐시. QueryCacheService.wrap(key, load) (전역)
+src/precomputed/            미리 계산 JSON. PrecomputedService.read(name)
+src/common/                 ZodValidationPipe 등 공용 부품, 기준값 criteria.ts
+src/types/                  응답 타입 (front-demo가 복사해 쓴다. 기준은 여기)
 src/<기능>/                 기능 하나 = 모듈 하나 (예: health/, encounters/)
   <기능>.module.ts
   <기능>.controller.ts      HTTP 입출력만. 계산하지 않는다
