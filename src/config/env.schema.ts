@@ -20,6 +20,8 @@ const DEFAULT_RATE_LIMIT_PER_MINUTE = 60;
 export const MAX_API_KEYS = 2;
 /** `openssl rand -hex 32` gives 64 characters; anything this short is a placeholder, not a key. */
 export const MIN_API_KEY_LENGTH = 32;
+/** Same rule as API keys: `openssl rand -hex 32`. */
+export const MIN_REVALIDATE_TOKEN_LENGTH = 32;
 
 const nonEmpty = z.string().trim().min(1);
 
@@ -69,6 +71,11 @@ export const envSchema = z
       z.coerce.number().int().positive().default(DEFAULT_CACHE_TTL_MS),
     ),
     API_KEYS: apiKeys,
+    // Blank: POST /admin/cache/clear refuses every request (development only).
+    REVALIDATE_TOKEN: z.preprocess(
+      blankAsUnset,
+      z.string().trim().min(MIN_REVALIDATE_TOKEN_LENGTH).optional(),
+    ),
     RATE_LIMIT_PER_MINUTE: z.preprocess(
       blankAsUnset,
       z.coerce.number().int().positive().default(DEFAULT_RATE_LIMIT_PER_MINUTE),
@@ -78,6 +85,14 @@ export const envSchema = z
     // Production must never start with the API open.
     if (env.NODE_ENV === 'production' && env.API_KEYS.length === 0) {
       ctx.addIssue({ code: 'custom', path: ['API_KEYS'], message: 'required in production' });
+    }
+    // Without it, production could only pick up a new data load by restarting.
+    if (env.NODE_ENV === 'production' && env.REVALIDATE_TOKEN === undefined) {
+      ctx.addIssue({
+        code: 'custom',
+        path: ['REVALIDATE_TOKEN'],
+        message: 'required in production',
+      });
     }
   });
 

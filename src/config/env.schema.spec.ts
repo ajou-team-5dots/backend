@@ -125,11 +125,31 @@ describe('validateEnv', () => {
     expect(tooShort).not.toContain('short-key');
   });
 
-  it('production에서는 API_KEYS가 필수다', () => {
-    expect(errorOf({ ...VALID, NODE_ENV: 'production', API_KEYS: '' })).toContain('API_KEYS(없음)');
-    expect(validateEnv({ ...VALID, NODE_ENV: 'production', API_KEYS: KEY_A }).API_KEYS).toEqual([
-      KEY_A,
-    ]);
+  it('production에서는 API_KEYS와 REVALIDATE_TOKEN이 필수다', () => {
+    const message = errorOf({
+      ...VALID,
+      NODE_ENV: 'production',
+      API_KEYS: '',
+      REVALIDATE_TOKEN: '',
+    });
+    expect(message).toContain('API_KEYS(없음)');
+    expect(message).toContain('REVALIDATE_TOKEN(없음)');
+
+    const env = validateEnv({
+      ...VALID,
+      NODE_ENV: 'production',
+      API_KEYS: KEY_A,
+      REVALIDATE_TOKEN: KEY_B,
+    });
+    expect(env.API_KEYS).toEqual([KEY_A]);
+    expect(env.REVALIDATE_TOKEN).toBe(KEY_B);
+  });
+
+  it('REVALIDATE_TOKEN은 개발에서 비워 둘 수 있고, 짧으면 거부하며 값은 출력하지 않는다', () => {
+    expect(validateEnv({ ...VALID, REVALIDATE_TOKEN: '' }).REVALIDATE_TOKEN).toBeUndefined();
+    const message = errorOf({ ...VALID, REVALIDATE_TOKEN: 'short-token' });
+    expect(message).toContain('REVALIDATE_TOKEN(형식 오류)');
+    expect(message).not.toContain('short-token');
   });
 
   it('요청 제한은 분당 60회가 기본이다', () => {

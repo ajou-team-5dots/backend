@@ -1,6 +1,7 @@
 import { Module } from '@nestjs/common';
 import { ConfigModule } from '@nestjs/config';
 
+import { AdminModule } from './admin/admin.module.js';
 import { QueryCacheModule } from './cache/query-cache.module.js';
 import { validateEnv } from './config/env.schema.js';
 import { EncountersModule } from './encounters/encounters.module.js';
@@ -16,6 +17,7 @@ import { SecurityModule } from './security/security.module.js';
     QueryCacheModule,
     HealthModule,
     EncountersModule,
+    AdminModule,
   ],
 })
 export class AppModule {}
