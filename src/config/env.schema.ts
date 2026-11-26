@@ -14,6 +14,12 @@ export const DEFAULT_PRECOMPUTED_DIR = fileURLToPath(
 );
 /** Same lifetime as front-demo's cacheLife('hours'). */
 const DEFAULT_CACHE_TTL_MS = 3_600_000;
+/** Per client IP per minute (see ThrottlerModule in security.module.ts). */
+const DEFAULT_RATE_LIMIT_PER_MINUTE = 60;
+/** Two keys at once lets a key be rotated without downtime: add the new one, move callers, drop the old. */
+export const MAX_API_KEYS = 2;
+/** `openssl rand -hex 32` gives 64 characters; anything this short is a placeholder, not a key. */
+export const MIN_API_KEY_LENGTH = 32;
 
 const nonEmpty = z.string().trim().min(1);
 
@@ -28,29 +34,52 @@ const clickHouseUrl = z.url({ protocol: /^https?$/ }).refine((value) => {
   return url.username === '' && url.password === '';
 });
 
-export const envSchema = z.object({
-  NODE_ENV: z.preprocess(
-    blankAsUnset,
-    z.enum(['development', 'production', 'test']).default('development'),
-  ),
-  PORT: z.preprocess(
-    blankAsUnset,
-    z.coerce.number().int().min(1).max(65_535).default(DEFAULT_PORT),
-  ),
-  CLICKHOUSE_URL: clickHouseUrl,
-  CLICKHOUSE_USER: nonEmpty,
-  CLICKHOUSE_PASSWORD: nonEmpty,
-  CLICKHOUSE_DB: nonEmpty,
-  CLICKHOUSE_REQUEST_TIMEOUT_MS: z.preprocess(
-    blankAsUnset,
-    z.coerce.number().int().positive().default(DEFAULT_REQUEST_TIMEOUT_MS),
-  ),
-  PRECOMPUTED_DIR: z.preprocess(blankAsUnset, nonEmpty.default(DEFAULT_PRECOMPUTED_DIR)),
-  CACHE_TTL_MS: z.preprocess(
-    blankAsUnset,
-    z.coerce.number().int().positive().default(DEFAULT_CACHE_TTL_MS),
-  ),
-});
+/** `KEY_A,KEY_B` -> ['KEY_A', 'KEY_B']; blank -> [] (no keys: the guard is off, development only). */
+const apiKeys = z
+  .preprocess(blankAsUnset, z.string().optional())
+  .transform((value) =>
+    (value ?? '')
+      .split(',')
+      .map((key) => key.trim())
+      .filter((key) => key !== ''),
+  )
+  .pipe(z.array(z.string().min(MIN_API_KEY_LENGTH)).max(MAX_API_KEYS));
+
+export const envSchema = z
+  .object({
+    NODE_ENV: z.preprocess(
+      blankAsUnset,
+      z.enum(['development', 'production', 'test']).default('development'),
+    ),
+    PORT: z.preprocess(
+      blankAsUnset,
+      z.coerce.number().int().min(1).max(65_535).default(DEFAULT_PORT),
+    ),
+    CLICKHOUSE_URL: clickHouseUrl,
+    CLICKHOUSE_USER: nonEmpty,
+    CLICKHOUSE_PASSWORD: nonEmpty,
+    CLICKHOUSE_DB: nonEmpty,
+    CLICKHOUSE_REQUEST_TIMEOUT_MS: z.preprocess(
+      blankAsUnset,
+      z.coerce.number().int().positive().default(DEFAULT_REQUEST_TIMEOUT_MS),
+    ),
+    PRECOMPUTED_DIR: z.preprocess(blankAsUnset, nonEmpty.default(DEFAULT_PRECOMPUTED_DIR)),
+    CACHE_TTL_MS: z.preprocess(
+      blankAsUnset,
+      z.coerce.number().int().positive().default(DEFAULT_CACHE_TTL_MS),
+    ),
+    API_KEYS: apiKeys,
+    RATE_LIMIT_PER_MINUTE: z.preprocess(
+      blankAsUnset,
+      z.coerce.number().int().positive().default(DEFAULT_RATE_LIMIT_PER_MINUTE),
+    ),
+  })
+  .superRefine((env, ctx) => {
+    // Production must never start with the API open.
+    if (env.NODE_ENV === 'production' && env.API_KEYS.length === 0) {
+      ctx.addIssue({ code: 'custom', path: ['API_KEYS'], message: 'required in production' });
+    }
+  });
 
 export type Env = z.infer<typeof envSchema>;
 
@@ -64,7 +93,8 @@ export const validateEnv = (raw: Record<string, unknown>): Env => {
     return result.data;
   }
   const problems = result.error.issues.map((issue) => {
-    const key = issue.path.join('.');
+    // Only the top-level key: API_KEYS problems point inside the parsed list (API_KEYS.0).
+    const key = String(issue.path[0] ?? '');
     const reason = raw[key] === undefined || raw[key] === '' ? '없음' : '형식 오류';
     return `${key}(${reason})`;
   });

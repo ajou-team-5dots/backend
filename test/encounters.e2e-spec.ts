@@ -4,7 +4,10 @@ import request from 'supertest';
 
 import { AppModule } from '../src/app.module.js';
 import { configureApp } from '../src/app.setup.js';
+import { API_KEY_HEADER } from '../src/security/api-key.guard.js';
 import { ClickHouseService } from '../src/clickhouse/clickhouse.service.js';
+
+import { TEST_API_KEY } from './test-env.js';
 
 // No database: checks routing and query validation with a stubbed ClickHouseService.
 describe('GET /encounters/count (e2e)', () => {
@@ -39,6 +42,7 @@ describe('GET /encounters/count (e2e)', () => {
   it('기본값(include, current)으로 조회한다', async () => {
     await request(app.getHttpServer())
       .get('/encounters/count?monster=small_zombie')
+      .set(API_KEY_HEADER, TEST_API_KEY)
       .expect(200)
       .expect({ monster: 'small_zombie', encounters: 4429 });
 
@@ -50,7 +54,10 @@ describe('GET /encounters/count (e2e)', () => {
   });
 
   it('모르는 몬스터는 404', async () => {
-    await request(app.getHttpServer()).get('/encounters/count?monster=nobody').expect(404);
+    await request(app.getHttpServer())
+      .get('/encounters/count?monster=nobody')
+      .set(API_KEY_HEADER, TEST_API_KEY)
+      .expect(404);
   });
 
   it.each([
@@ -58,7 +65,7 @@ describe('GET /encounters/count (e2e)', () => {
     ['monster 형식 오류', "/encounters/count?monster=x'%20OR%201=1"],
     ['heavy 값 오류', '/encounters/count?monster=small_zombie&heavy=maybe'],
   ])('%s → 400, DB를 부르지 않는다', async (_name, url) => {
-    await request(app.getHttpServer()).get(url).expect(400);
+    await request(app.getHttpServer()).get(url).set(API_KEY_HEADER, TEST_API_KEY).expect(400);
     expect(query).not.toHaveBeenCalled();
   });
 });

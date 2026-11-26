@@ -10,6 +10,9 @@ const VALID = {
   CLICKHOUSE_DB: 'default',
 };
 
+const KEY_A = 'a'.repeat(32);
+const KEY_B = 'b'.repeat(40);
+
 const errorOf = (raw: Record<string, unknown>): string => {
   try {
     validateEnv(raw);
@@ -28,6 +31,8 @@ describe('validateEnv', () => {
       CLICKHOUSE_REQUEST_TIMEOUT_MS: 10_000,
       PRECOMPUTED_DIR: DEFAULT_PRECOMPUTED_DIR,
       CACHE_TTL_MS: 3_600_000,
+      API_KEYS: [],
+      RATE_LIMIT_PER_MINUTE: 60,
     });
   });
 
@@ -103,6 +108,35 @@ describe('validateEnv', () => {
     expect(message).not.toContain('p4ss-w0rd-never-printed');
     expect(message).not.toContain('db.example.test');
     expect(message).not.toContain('staging');
+  });
+
+  it('API_KEYS는 쉼표로 나눠 두 개까지 받는다', () => {
+    const env = validateEnv({ ...VALID, API_KEYS: ` ${KEY_A} , ${KEY_B} ` });
+    expect(env.API_KEYS).toEqual([KEY_A, KEY_B]);
+    expect(validateEnv(VALID).API_KEYS).toEqual([]);
+  });
+
+  it('API_KEYS가 세 개 이상이거나 너무 짧으면 거부하고 값은 출력하지 않는다', () => {
+    const tooMany = errorOf({ ...VALID, API_KEYS: [KEY_A, KEY_B, `${KEY_A}c`].join(',') });
+    const tooShort = errorOf({ ...VALID, API_KEYS: 'short-key' });
+    expect(tooMany).toContain('API_KEYS(형식 오류)');
+    expect(tooShort).toContain('API_KEYS(형식 오류)');
+    expect(tooMany).not.toContain(KEY_A);
+    expect(tooShort).not.toContain('short-key');
+  });
+
+  it('production에서는 API_KEYS가 필수다', () => {
+    expect(errorOf({ ...VALID, NODE_ENV: 'production', API_KEYS: '' })).toContain('API_KEYS(없음)');
+    expect(validateEnv({ ...VALID, NODE_ENV: 'production', API_KEYS: KEY_A }).API_KEYS).toEqual([
+      KEY_A,
+    ]);
+  });
+
+  it('요청 제한은 분당 60회가 기본이다', () => {
+    expect(validateEnv({ ...VALID, RATE_LIMIT_PER_MINUTE: '' }).RATE_LIMIT_PER_MINUTE).toBe(60);
+    expect(errorOf({ ...VALID, RATE_LIMIT_PER_MINUTE: '0' })).toContain(
+      'RATE_LIMIT_PER_MINUTE(형식 오류)',
+    );
   });
 
   it('URL에 계정이 들어 있으면 거부한다', () => {
