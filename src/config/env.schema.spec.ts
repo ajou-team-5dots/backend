@@ -32,7 +32,6 @@ describe('validateEnv', () => {
       PRECOMPUTED_DIR: DEFAULT_PRECOMPUTED_DIR,
       CACHE_TTL_MS: 3_600_000,
       API_KEYS: [],
-      RATE_LIMIT_PER_MINUTE: 60,
     });
   });
 
@@ -150,13 +149,6 @@ describe('validateEnv', () => {
     const message = errorOf({ ...VALID, REVALIDATE_TOKEN: 'short-token' });
     expect(message).toContain('REVALIDATE_TOKEN(형식 오류)');
     expect(message).not.toContain('short-token');
-  });
-
-  it('요청 제한은 분당 60회가 기본이다', () => {
-    expect(validateEnv({ ...VALID, RATE_LIMIT_PER_MINUTE: '' }).RATE_LIMIT_PER_MINUTE).toBe(60);
-    expect(errorOf({ ...VALID, RATE_LIMIT_PER_MINUTE: '0' })).toContain(
-      'RATE_LIMIT_PER_MINUTE(형식 오류)',
-    );
   });
 
   it('URL에 계정이 들어 있으면 거부한다', () => {

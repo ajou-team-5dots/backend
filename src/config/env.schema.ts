@@ -14,8 +14,6 @@ export const DEFAULT_PRECOMPUTED_DIR = fileURLToPath(
 );
 /** Same lifetime as front-demo's cacheLife('hours'). */
 const DEFAULT_CACHE_TTL_MS = 3_600_000;
-/** Per client IP per minute (see ThrottlerModule in security.module.ts). */
-const DEFAULT_RATE_LIMIT_PER_MINUTE = 60;
 /** Two keys at once lets a key be rotated without downtime: add the new one, move callers, drop the old. */
 export const MAX_API_KEYS = 2;
 /** `openssl rand -hex 32` gives 64 characters; anything this short is a placeholder, not a key. */
@@ -75,10 +73,6 @@ export const envSchema = z
     REVALIDATE_TOKEN: z.preprocess(
       blankAsUnset,
       z.string().trim().min(MIN_REVALIDATE_TOKEN_LENGTH).optional(),
-    ),
-    RATE_LIMIT_PER_MINUTE: z.preprocess(
-      blankAsUnset,
-      z.coerce.number().int().positive().default(DEFAULT_RATE_LIMIT_PER_MINUTE),
     ),
   })
   .superRefine((env, ctx) => {

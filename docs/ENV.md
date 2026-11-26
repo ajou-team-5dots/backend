@@ -22,7 +22,6 @@
 | `PRECOMPUTED_DIR`               | 아님            | 아님      | `data/precomputed` (기본)  | 마운트한 폴더 (4장)        |
 | `CACHE_TTL_MS`                  | 아님            | 아님      | `3600000` (기본, 1시간)    | `3600000` (기본)           |
 | `API_KEYS`                      | production 필수 | **비밀**  | 비워 두면 검사 끔          | 키 1~2개                   |
-| `RATE_LIMIT_PER_MINUTE`         | 아님            | 아님      | `60` (기본)                | `60` (기본)                |
 | `REVALIDATE_TOKEN`              | production 필수 | **비밀**  | 비워 두면 캐시 비우기 거부 | 토큰 1개                   |
 
 - `CLICKHOUSE_URL`은 `http://` 또는 `https://`만 받는다. 계정과 비밀번호를 URL에 넣으면 거부한다
@@ -32,8 +31,8 @@
 - `PRECOMPUTED_DIR`: Python 배치가 쓴 `<이름>.json`(`meta`, `patches`, `expected-risk`, `pentagon`, `h2-same-condition`)이 있는 폴더. 비워 두면 기본값은 **프로젝트 루트의 `data/precomputed`** 다. 테스트, `pnpm start:prod`, Docker 이미지의 `/app` 등 어디서 실행하든 같은 폴더를 가리킨다. 값을 직접 적을 때 상대 경로는 실행 위치 기준이므로 절대 경로를 권한다
 - `CACHE_TTL_MS`: ClickHouse 조회와 미리 계산 JSON을 프로세스 메모리에 기억하는 시간. 적재·배치 직후에는 캐시를 비워야 새 값이 보인다(`REVALIDATE_TOKEN` 항목 참고)
 - `API_KEYS`: `/health`를 뺀 모든 요청은 `x-api-key` 헤더가 이 중 하나와 같아야 한다. 없거나 틀리면 401(둘 다 같은 문구). `/health/db`도 키가 필요하다. 키는 쉼표로 두 개까지 받아, 새 키를 더하고 → Vercel 값을 바꾸고 → 옛 키를 빼는 순서로 중단 없이 바꾼다. 개발에서 비우면 검사를 끄고 시작할 때 경고 로그를 한 줄 남긴다. production에서 비우면 시작하지 않는다
-- `RATE_LIMIT_PER_MINUTE`: IP 하나가 모든 경로를 합쳐 1분에 보낼 수 있는 요청 수. 넘으면 429. 키가 틀린 요청도 센다. 이 API를 부르는 것은 Next 서버뿐이라 사실상 사이트 전체 요청 수다. 사용자가 늘면 올린다
-- `REVALIDATE_TOKEN`: `POST /admin/cache/clear`만 이 토큰(헤더 `x-revalidate-token`)으로 연다. API 키로는 열리지 않고, 이 토큰으로 다른 경로가 열리지도 않는다. 없거나 틀리면 401. 요청 제한(`RATE_LIMIT_PER_MINUTE`)은 똑같이 받는다. 응답은 `{"cleared": <비운 항목 수>}`
+- **요청 제한은 두지 않는다.** API 키 검사가 DB에 닿기 전에 걸러 내고, 사용자별 제한이 필요하면 Vercel(Next 서버) 쪽에서 한다
+- `REVALIDATE_TOKEN`: `POST /admin/cache/clear`만 이 토큰(헤더 `x-revalidate-token`)으로 연다. API 키로는 열리지 않고, 이 토큰으로 다른 경로가 열리지도 않는다. 없거나 틀리면 401. 응답은 `{"cleared": <비운 항목 수>}`
 - **ClickHouse 적재나 Python 배치 뒤에는 이 엔드포인트를 부르거나 컨테이너를 다시 시작한다.** 그래야 새 데이터와 새 몬스터 목록이 보인다(안 하면 `CACHE_TTL_MS`, 기본 1시간 뒤에 바뀐다)
 
 ### 나중에 추가할 키

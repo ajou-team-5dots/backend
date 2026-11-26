@@ -10,7 +10,7 @@ export interface CacheClearResult {
 
 /**
  * Operator routes. @Public() skips the API key guard (an API key must not be able to clear the
- * cache); RevalidateTokenGuard lets only REVALIDATE_TOKEN through. The rate limit still applies.
+ * cache); RevalidateTokenGuard lets only REVALIDATE_TOKEN through.
  */
 @Public()
 @UseGuards(RevalidateTokenGuard)
